@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "repository": "Millwright Engine",
+  "worktrees": "c:/projects/millwright-worktrees",
+  "guard": {
+    "files": ["CMakePresets.json", "cmake/warnings.cmake", ".clang-tidy", ".clang-format", ".claude/settings.json", ".claude/settings.local.json"],
+    "folders": [".github/workflows/", ".claude/hooks/", "git-hooks/"]
+  },
+  "scratch_patterns": ["Untitled-*.txt", "*.ipynb"],
+  "review": {
+    "costly_paths": [
+      {"pattern": "src/core/", "reason": "allocators, handles, the clock, random streams, trigonometry: memory and determinism"},
+      {"pattern": "src/sim/", "reason": "the tick, pools, spatial hash, flow field: determinism and the tick budget"},
+      {"pattern": "src/save/", "reason": "the save format and its migration ladder: permanent once players have saves"},
+      {"pattern": "src/content/", "reason": "the content format, which is the mod format: a public contract"},
+      {"pattern": "src/game/", "reason": "the game's pipelines: Stone 11's forced rounds found 6 blocking findings in 11 of its pull requests, each a test that could not fail (owner, 2026-10-13)"},
+      {"pattern": "src/([^/]+)/\\1\\.h$", "reason": "a module's one public header: an interface"},
+      {"pattern": "tests/invariants/", "reason": "a bug there lets violations through silently"},
+      {"pattern": "cmake/", "reason": "the build's CMake modules: a mistake changes how every target builds"},
+      {"pattern": "cmake/warnings\\.cmake$|CMakePresets\\.json$|\\.clang-tidy$|\\.clang-format$|\\.github/workflows/|\\.claude/hooks/|\\.claude/settings[^/]*\\.json$|\\.claude/mw\\.json$|git-hooks/", "reason": "the guard stack, as CLAUDE.md lists it"},
+      {"pattern": "tools/review_pr\\.py$", "reason": "the reviewer: a bug weakens every later review"}
+    ],
+    "profiles": {
+      "stone": ["claude-fable-5-1", "high"],
+      "costly": ["claude-fable-5-1", "high"],
+      "step": ["claude-opus-5-5", "high"]
+    },
+    "allowed_tools": [
+      "Bash(cmake --preset:*)",
+      "Bash(cmake --build:*)",
+      "Bash(./run_tests.bat:*)",
+      "Bash(.\\run_tests.bat:*)",
+      "Bash(./lint.bat:*)",
+      "Bash(.\\lint.bat:*)",
+      "Bash(python tests/invariants/invariants.py:*)",
+      "Bash(python3 tests/invariants/invariants.py:*)",
+      "Bash(python tests\\invariants\\invariants.py:*)",
+      "Bash(python tools/test_log_sweep.py:*)",
+      "Bash(python3 tools/test_log_sweep.py:*)",
+      "Bash(python tools\\test_log_sweep.py:*)",
+      "Bash(python tools/test_runner_output.py:*)",
+      "Bash(python3 tools/test_runner_output.py:*)",
+      "Bash(python tools\\test_runner_output.py:*)",
+      "Bash(python tools/test_perf_probe.py:*)",
+      "Bash(python3 tools/test_perf_probe.py:*)",
+      "Bash(python tools\\test_perf_probe.py:*)",
+      "Bash(python tools/test_device_run.py:*)",
+      "Bash(python3 tools/test_device_run.py:*)",
+      "Bash(python tools\\test_device_run.py:*)"
+    ],
+    "roadmap": "ROADMAP.md",
+    "plan_sentence": "Its plan is `(documents/plans/[\\w.-]+\\.md)`",
+    "invariants": {"file": "CLAUDE.md", "heading": "Load-Bearing Invariants"},
+    "path_sources": ["CLAUDE.md", "AGENTS.md", "documents/README.md", "the skills"],
+    "findings_folder": "documents/findings/"
+  }
+}

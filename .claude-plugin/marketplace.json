@@ -1,0 +1,14 @@
+{
+  "name": "millwright",
+  "owner": {
+    "name": "nygus20"
+  },
+  "description": "The Millwright workflow plugin, which the Millwright engine and the repositories built on it pin at one tag.",
+  "plugins": [
+    {
+      "name": "mw",
+      "source": "./plugins/mw",
+      "description": "The Millwright way of working: the stone and step skills, four hooks, the output style, and the review and merge tools."
+    }
+  ]
+}

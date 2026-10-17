@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "repository": "New Repository",
+  "worktrees": "c:/projects/new-repository-worktrees",
+  "guard": {
+    "files": ["CMakePresets.json", "cmake/warnings.cmake", ".clang-tidy", ".clang-format", ".claude/settings.json", ".claude/settings.local.json"],
+    "folders": [".github/workflows/", ".claude/hooks/", "git-hooks/"]
+  },
+  "scratch_patterns": ["Untitled-*.txt", "*.ipynb"],
+  "review": {
+    "costly_paths": [
+      {"pattern": "src/([^/]+)/\\1\\.h$", "reason": "a module's one public header: an interface"},
+      {"pattern": "tests/invariants/", "reason": "a bug there lets violations through silently"},
+      {"pattern": "cmake/", "reason": "the build's CMake modules: a mistake changes how every target builds"},
+      {"pattern": "cmake/warnings\\.cmake$|CMakePresets\\.json$|\\.clang-tidy$|\\.clang-format$|\\.github/workflows/|\\.claude/hooks/|\\.claude/settings[^/]*\\.json$|\\.claude/mw\\.json$|git-hooks/", "reason": "the guard stack, as CLAUDE.md lists it"}
+    ],
+    "allowed_tools": [
+      "Bash(cmake --preset:*)",
+      "Bash(cmake --build:*)"
+    ]
+  }
+}

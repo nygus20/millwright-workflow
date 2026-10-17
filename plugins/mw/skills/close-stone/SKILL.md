@@ -1,0 +1,36 @@
+---
+name: close-stone
+description: Close a stone once its exit test is green: records, the workstream row, the memory sweep, the closing summary, the merge to main. Use when a stone's last step has merged, when asked to "close Stone N", or when an owner-checked stone receives its verdict.
+---
+
+# Close a stone
+
+A stone closes when its exit test is green and every step has merged into its branch (AGENTS.md "Working Units and Sessions"). An owner-checked stone runs every item below except item 5 before the owner's verdict, the stone review included, so the owner looks at a stone that is ready to merge; each feedback round is a step on the same branch (ruled by the owner on 2026-10-11).
+
+## Before the merge to `main`
+
+1. Run the full suite unfiltered (`run-tests` skill) and the lint, and cite the real count.
+2. Merge `main` into the stone branch, so the records below are edited against their latest text; another stone may have closed meanwhile.
+3. CHANGELOG: one line per notable change under `[Unreleased]` (`changelog-entry` skill), anchored `(phase N, Stone M)`.
+4. The phase plan: tick the stone's checkboxes; move anything deferred to "Inbound" with a date. Then check every Inbound line and known issue the stone's plan claimed, and every one that names the stone or its workstream: each is settled, by deleting its line from "Inbound" while the closing summary names the item and the fix (git history keeps the line's text; no "Settled," line is written, and the invariant test fails one) or by a `RESOLVED <date of the fix>` heading on its known-issues entry with one line on the fix, as that doc's format says, or it goes back to "Inbound" with a new named owner and the reason.
+5. The workstream page (`documents/plans/workstreams.md`): the stone's row becomes "closed <date>" with the pull request link. For an owner-checked stone, this item and the stone's state in the phase plan's table wait for the verdict and land in one commit after it, with the verdict's date. That commit changes only the two state cells, so it is exempt from the review in item 9. When the owner's look asks for changes instead, each feedback round is a step reviewed as a step; after it merges, the stone review reruns as a fix check over its merge, and the owner looks again. Only a passing verdict lands the commit with the two state cells.
+6. Check that `documents/README.md` lists the stone's findings doc, which the first step added if the `prior-art` skill wrote one.
+7. Memory sweep: read the auto-memory index; move any project-type entry to the tracked doc that owns it (`AGENTS.md` "Common Gotchas", `documents/known-issues.md`, `documents/idea-bag.md`, the decisions doc) and delete it from memory.
+8. Common Gotchas: if a rule bit the stone and no entry exists, write one now, in the form the section states.
+9. Mark the stone's pull request ready (`gh pr ready <stone-pr>`), which starts its first CI run over the whole stone; marked any earlier, every record commit above would cancel and restart that build. Then run the `adversarial-review` skill over the stone's pull request to `main`, last, so the review covers the whole stone diff with `main` merged in and the records edited. Fix every blocking finding with commits on the stone branch, then rerun the tool, so the fixes pass a fix check before the merge, because nothing reviews the stone after `main`. The reviewer reports blocking findings only, so a clean round merges as it stands. This review is the only one most steps get: a step that touches no costly path merged on green CI alone (`adversarial-review` skill). A fix becomes a step with its own review only when it is new work over 150 changed lines, or when the owner asks (ruled by the owner on 2026-10-11); its merge into the stone branch is then part of the next fix check. At an exit 3 here the author's ruling may only be "one more round" or "stop" (`documents/process/agent-rulings.md`, pre-ruling 2).
+
+## The closing summary
+
+Post it as a comment on the stone's pull request, then give the owner the same text. Plain language, in this order:
+
+- A headline of what the engine or its developer can now do. Deferred, skipped or late-found bugs go in the headline, not at the end.
+- Three to six delivery bullets.
+- The rulings: every ruling the step briefs recorded, found by their `mw-step-brief` marker, every owner ruling the agent relayed from a session, found by its `mw-owner-ruling` marker on the stone's pull request or a step's, and the stone review's own, in one list with the pre-ruling each applied, or "owner" for a relayed one; then the ambiguities the briefs named, and every item a brief held for the owner, each still open until the owner rules. The rounds and minutes per step come from the briefs too.
+- One line on the test result: the count, the sanitizer line, the sweep line, the perf verdict if the stone ran the probe.
+- One line on the docs' weight, ruled by the owner on 2026-10-13: the bytes of the tracked Markdown outside `third_party/` beside the bytes under `src/`, and the active phase plan's bytes and those of `documents/findings/` against their caps in `tests/invariants/doc_rules.py`.
+- The suggested next stone and why.
+- For a stone that edited a hook, a workflow or a preset under the owner's override: the reminder to delete `.claude/settings.local.json`, or the `mwAllowGuardEdit` key in it.
+
+## The merge
+
+Wait for green CI on the stone's pull request: wait until `gh run list --commit <head>` shows a run for its head commit, `gh run watch <run>` on each run not yet completed (a queued run has no result yet), then read every run's result with `gh run list --commit <head> --json conclusion` and confirm that each is `success` or `skipped` and that one of them ran the suite or says no code path changed, then `gh pr merge <stone-pr> --merge`. A skipped run is one the job's condition skips, such as a push to a stone branch while the CI runner is the laptop, an event that came while the pull request was a draft, or a label or body edit on a stone's pull request to `main`. `gh run watch --exit-status` exits non-zero on a skipped run, so its exit code does not decide. `gh run watch` waits on a queued run without a limit, so watch in the background, and a run still queued after ten minutes goes to `documents/process/ci-runner.md`, "When a run stays queued". A `gh pr checks --watch` started before the run exists returns at once. `${CLAUDE_PLUGIN_ROOT}/tools/merge_step.py` merges steps only and refuses a pull request into `main`. Never squash: the step history is what `git bisect` walks. After the merge, delete the stone branch and its step branches on the remote, then remove the stone's worktree from the main checkout: `git worktree remove c:/projects/millwright-worktrees/<slug>`.

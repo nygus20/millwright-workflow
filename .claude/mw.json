@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "repository": "Millwright Workflow",
+  "worktrees": "c:/projects/millwright-workflow-worktrees",
+  "guard": {
+    "files": [".claude/settings.json", ".claude/settings.local.json"],
+    "folders": [".github/workflows/"]
+  },
+  "scratch_patterns": ["Untitled-*.txt", "*.ipynb"],
+  "review": {
+    "costly_paths": [
+      {"pattern": "plugins/mw/hooks/", "reason": "the hooks: every repository that pins the plugin runs them on each tool call"},
+      {"pattern": "plugins/mw/mw_data\\.py$", "reason": "the data file's loader: a bug stops every edit in every repository"},
+      {"pattern": "plugins/mw/tools/review_pr\\.py$", "reason": "the reviewer: a bug weakens every later review"},
+      {"pattern": "plugins/mw/templates/require_plugin\\.py$", "reason": "the repository-side hook each repository copies"},
+      {"pattern": "\\.claude-plugin/|plugins/mw/\\.claude-plugin/", "reason": "the manifests: a wrong version or source strands every pin"},
+      {"pattern": "\\.github/workflows/|\\.claude/settings[^/]*\\.json$|\\.claude/mw\\.json$", "reason": "the guard stack, as README.md lists it"}
+    ],
+    "allowed_tools": [
+      "Bash(python plugins/mw/tools/run_checks.py:*)",
+      "Bash(python3 plugins/mw/tools/run_checks.py:*)",
+      "Bash(python plugins\\mw\\tools\\run_checks.py:*)"
+    ],
+    "invariants": {"file": "README.md", "heading": "Rules"},
+    "path_sources": ["README.md", "plugins/mw/README.md", "the skills"],
+    "findings_folder": "findings/"
+  }
+}
