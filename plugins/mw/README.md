@@ -32,7 +32,7 @@ This plugin holds the way of working that the Millwright engine and the reposito
 ```json
 {
   "extraKnownMarketplaces": {
-    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.0"}}
+    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.1"}}
   },
   "enabledPlugins": {"mw@millwright": true},
   "hooks": {
