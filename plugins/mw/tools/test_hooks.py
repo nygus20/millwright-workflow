@@ -66,7 +66,11 @@ def run_hook(hook, project, file_path, extra_env=None, session_id=None, script=N
 
 
 def temp_env(folder, pid=None):
-    """The environment that points tempfile.gettempdir() at folder, with CLAUDE_PID when given."""
+    """The environment that points tempfile.gettempdir() at folder, with CLAUDE_PID when given.
+
+    The folder is made here: gettempdir() skips a folder that does not exist and falls back to the system's, where a
+    hook run would leave a real marker."""
+    Path(folder).mkdir(parents=True, exist_ok=True)
     env = {"TMPDIR": str(folder), "TEMP": str(folder), "TMP": str(folder)}
     if pid is not None:
         env["CLAUDE_PID"] = pid
@@ -197,6 +201,22 @@ with tempfile.TemporaryDirectory() as scratch:
     check("emoji: passes a file outside the project", run_hook(emoji_hook, project, outside)[0], 0)
 
     session = "session_start.py"
+    system_markers = Path(tempfile.gettempdir()) / "mw-plugin"
+
+
+    def plugin_markers():
+        """The system folder's markers that name this plugin's root: a test hook run that left one there leaked."""
+        found = set()
+        for path in system_markers.glob("*") if system_markers.is_dir() else []:
+            try:
+                if json.loads(path.read_text(encoding="utf-8")).get("root") == str(PLUGIN):
+                    found.add(path.name)
+            except (OSError, ValueError, AttributeError):
+                pass
+        return found
+
+
+    before = plugin_markers()
     for has_hooks in (True, False):
         repo = base / f"repo_{has_hooks}"
         repo.mkdir()
@@ -245,6 +265,9 @@ with tempfile.TemporaryDirectory() as scratch:
     check("session start: a missing data file is named on the line, and the hook exits 0",
           (code, "its data file is refused: .claude/mw.json is missing" in out, (markers / "session-three").exists()),
           (0, True, True))
+
+    check("session start: no test run leaves a marker in the system's temporary folder", plugin_markers() - before,
+          set())
 
     # The repository-side hook template: it denies an edit when neither marker exists, and passes with either.
     template = PLUGIN / "templates" / "require_plugin.py"
