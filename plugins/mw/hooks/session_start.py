@@ -10,9 +10,9 @@ hook has no decision control, and its exit code 2 only shows stderr to the user.
    idempotent and silent.
 2. It writes two marker files under <temp>/mw-plugin/, where <temp> is
    tempfile.gettempdir(): one named by the session id from the hook's input,
-   and one named ppid-<id> by the id of the Claude Code process that runs the
-   hooks. Each holds the plugin's root and version as JSON. The repository-side
-   hook templates/require_plugin.py denies an edit when neither marker exists,
+   and, when CLAUDE_PID is set, one named ppid-<CLAUDE_PID> by the id of the
+   Claude Code process that runs the hooks. Each holds the plugin's root and
+   version as JSON. The repository-side hook templates/require_plugin.py denies an edit when neither marker exists,
    so a session that lacks the plugin stops loudly at its first edit. The
    second marker covers a tool call whose session id differs from the start's,
    such as a subagent's. It prunes markers older than MARKER_DAYS.
@@ -21,11 +21,12 @@ hook has no decision control, and its exit code 2 only shows stderr to the user.
    refuses is named on that line instead; the guard hook refuses it at the
    first edit.
 
-The process id. Claude Code sets CLAUDE_PID in a hook's environment to its own
-process id (observed on Claude Code 2.1.302). The hook's own parent is a shell
-or a launcher, a different process for each hook, so the parent id is the
-fallback only when CLAUDE_PID is missing. require_plugin.py reads the id the
-same way.
+The process id. Claude Code sets CLAUDE_PID to its own process id in the hook
+commands it spawns, from v2.1.214 on (https://code.claude.com/docs/en/env-vars).
+The hook's own parent is a shell or a launcher, a different process for each
+hook, so it never names Claude Code: without CLAUDE_PID the hook writes no
+process marker, by the owner's ruling of 2026-10-17. require_plugin.py reads
+the id the same way.
 
 Known gap: a process id the system reuses within MARKER_DAYS lets a later
 session with that id through without the plugin, when its own session marker is
@@ -57,8 +58,8 @@ def plugin_version():
 
 
 def claude_pid():
-    """The id of the Claude Code process that runs the hooks: CLAUDE_PID, else this hook's parent."""
-    return os.environ.get("CLAUDE_PID") or str(os.getppid())
+    """The id of the Claude Code process that runs the hooks, from CLAUDE_PID, or None when it is unset."""
+    return os.environ.get("CLAUDE_PID") or None
 
 
 def marker_folder():
@@ -81,7 +82,8 @@ def write_markers(session_id, version):
         except OSError:
             pass  # another session pruned it first
     body = json.dumps({"root": PLUGIN_ROOT, "version": version})
-    names = [f"ppid-{claude_pid()}"] + ([session_id] if session_id else [])
+    pid = claude_pid()
+    names = ([f"ppid-{pid}"] if pid else []) + ([session_id] if session_id else [])
     for name in names:
         if "/" in name or "\\" in name or name in (".", ".."):
             continue  # a session id is a UUID; anything else never names a path

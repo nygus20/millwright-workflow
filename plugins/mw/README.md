@@ -32,7 +32,7 @@ This plugin holds the way of working that the Millwright engine and the reposito
 ```json
 {
   "extraKnownMarketplaces": {
-    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.1"}}
+    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.2"}}
   },
   "enabledPlugins": {"mw@millwright": true},
   "hooks": {
@@ -54,7 +54,7 @@ A session that did not load the plugin writes no marker, and `require_plugin.py`
 
 ## The session markers
 
-`hooks/session_start.py` writes two files under the system's temporary folder, in `mw-plugin/`. One is named by the session id. The other is named `ppid-<id>` by the process id of Claude Code, which Claude Code sets as `CLAUDE_PID` in a hook's environment. Each holds the plugin's folder and version as JSON. The second marker covers a tool call whose session id differs from the one the session started with, such as a subagent's. The hook deletes markers older than a day. A process id that the system reuses within that day lets a session without the plugin through, and the hook's header records that gap.
+`hooks/session_start.py` writes two files under the system's temporary folder, in `mw-plugin/`. One is named by the session id. The other is named `ppid-<id>` by the process id of Claude Code, which Claude Code sets as `CLAUDE_PID` in a hook's environment from v2.1.214 on (https://code.claude.com/docs/en/env-vars). Without `CLAUDE_PID`, the hook writes no second marker, and only the session marker counts. Each holds the plugin's folder and version as JSON. The second marker covers a tool call whose session id differs from the one the session started with, such as a subagent's. The hook deletes markers older than a day. A process id that the system reuses within that day lets a session without the plugin through, and the hook's header records that gap.
 
 ## How a change is released
 

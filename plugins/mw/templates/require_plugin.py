@@ -3,9 +3,10 @@
 A repository that uses the plugin copies this file to .claude/hooks/require_plugin.py
 unchanged and wires it in .claude/settings.json on Edit|Write|MultiEdit|NotebookEdit
 with "onFailure": "block". The plugin's SessionStart hook writes two markers under
-<temp>/mw-plugin/: one named by the session id, one named ppid-<id> by the Claude Code
-process id, which Claude Code sets as CLAUDE_PID in a hook's environment. With neither
-present, the plugin did not start in this session, and this hook denies the edit with
+<temp>/mw-plugin/: one named by the session id, one named ppid-<CLAUDE_PID>. Claude Code
+sets CLAUDE_PID to its own process id in hook commands (https://code.claude.com/docs/en/env-vars);
+without it only the session marker counts. With neither present, the plugin did not
+start in this session, and this hook denies the edit with
 a reason naming the plugin, the pin and what installs it. A read-only session goes on.
 Known gap: a process id reused within a day passes; the plugin's session_start.py says why.
 """
@@ -23,8 +24,8 @@ def main() -> None:
         payload = {}
     session = str(payload.get("session_id") or "") if isinstance(payload, dict) else ""
     folder = os.path.join(tempfile.gettempdir(), "mw-plugin")
-    pid = os.environ.get("CLAUDE_PID") or str(os.getppid())
-    names = [f"ppid-{pid}"] + ([session] if session and not set(session) & set("/\\.") else [])
+    pid = os.environ.get("CLAUDE_PID")
+    names = ([f"ppid-{pid}"] if pid else []) + ([session] if session and not set(session) & set("/\\.") else [])
     if any(os.path.isfile(os.path.join(folder, name)) for name in names):
         return
     project = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()

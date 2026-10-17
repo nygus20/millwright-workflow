@@ -253,9 +253,11 @@ with tempfile.TemporaryDirectory() as scratch:
     check("session start: prints one context line", len(lines), 1)
     check("session start: the line names the version, the root and the worktree folder",
           [f"mw {VERSION}" in out, str(PLUGIN) in out, DATA["worktrees"] in out], [True, True, True])
+    ppids = {p.name for p in markers.iterdir() if p.name.startswith("ppid-")}
     run_hook(session, repo, repo, temp_env(tmp), session_id="session-two")
-    check("session start: without CLAUDE_PID the parent's id names a marker",
-          len([p for p in markers.iterdir() if p.name.startswith("ppid-")]), 3)
+    check("session start: without CLAUDE_PID no process marker is written, and the session marker is",
+          ({p.name for p in markers.iterdir() if p.name.startswith("ppid-")} - ppids, (markers / "session-two").exists()),
+          (set(), True))
     run_hook(session, repo, repo, temp_env(tmp, "7"), session_id="../escaped")
     check("session start: a session id with a path in it writes no file", [(tmp / "escaped").exists(),
           (markers / "ppid-7").exists()], [False, True])
@@ -290,6 +292,16 @@ with tempfile.TemporaryDirectory() as scratch:
     check("require: a session id with a path in it is no marker",
           denied(run_hook(None, pinned, pinned / "a.txt", temp_env(tmp, "99"), session_id="../mw-plugin/session-one",
                           script=template)[1]), True)
+    # Without CLAUDE_PID, a marker named after the hook's own parent never counts: the parent is not Claude Code. The
+    # hook runs on the base interpreter, because a virtual environment's launcher would stand between it and this test.
+    orphan = base / "tmp_orphan"
+    (orphan / "mw-plugin").mkdir(parents=True)
+    (orphan / "mw-plugin" / f"ppid-{os.getpid()}").write_text("{}", encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PID"}
+    env.update({"CLAUDE_PROJECT_DIR": str(pinned), **temp_env(orphan)})
+    out = subprocess.run([getattr(sys, "_base_executable", sys.executable), str(template)], capture_output=True, text=True,
+                         input=json.dumps({"session_id": "nobody"}), env=env, cwd=pinned, timeout=30).stdout
+    check("require: without CLAUDE_PID a marker named after its own parent does not pass", denied(out), True)
     code, out, _ = run_hook(None, base / "repo_False", base / "a.txt", temp_env(empty, "99"), script=template)
     check("require: denies without a pin, naming where the pin goes", (denied(out), ".claude/settings.json" in out),
           (True, True))
