@@ -1,6 +1,6 @@
 ---
 name: coordinate-stone
-description: Coordinate an open stone's steps in a fresh session, one subagent per step, after the start-stone skill opened the stone; resume a stopped or oversized coordinator from the stone's pull request alone. Use when the owner runs /coordinate-stone, with or without a stone number, after /clear, or says "coordinate Stone N" or "resume Stone N".
+description: Coordinate an open stone's steps in a fresh session, one subagent per step, after the start-stone skill opened the stone; resume a stopped or oversized coordinator from the stone's pull request alone. Use when the owner runs /mw:coordinate-stone, with or without a stone number, after /clear, or says "coordinate Stone N" or "resume Stone N".
 argument-hint: "[stone number]"
 ---
 
@@ -10,7 +10,7 @@ The planning session ends when the stone opens (`start-stone` skill, "After appr
 
 ## The first line
 
-The session's first line names the model it runs on, as its system prompt states it. When that model is not Opus, the line warns the owner and says how to switch: run /model claude-opus-5-5, then /coordinate-stone again. The skill cannot pin the session's model: Claude Code's skills page (https://code.claude.com/docs/en/skills, read 2026-10-13) says a skill's `model` field holds only for the rest of the turn that invokes the skill, and the session's model resumes at the next prompt. This skill therefore sets no `model` field, because a pin for one turn would make the first line name Opus while every later turn ran on the session's model; the first line's warning is the guard.
+The session's first line names the model it runs on, as its system prompt states it. When that model is not Opus, the line warns the owner and says how to switch: run /model claude-opus-5-5, then /mw:coordinate-stone again. The skill cannot pin the session's model: Claude Code's skills page (https://code.claude.com/docs/en/skills, read 2026-10-13) says a skill's `model` field holds only for the rest of the turn that invokes the skill, and the session's model resumes at the next prompt. This skill therefore sets no `model` field, because a pin for one turn would make the first line name Opus while every later turn ran on the session's model; the first line's warning is the guard.
 
 ## Find the stone
 
@@ -70,7 +70,7 @@ The coordinator keeps no report beyond the next decision; the pull request body 
 
 ## The context rule
 
-After each merge the coordinator reads its own cache read: the `usage.cache_read_input_tokens` of the newest assistant entry in the session's transcript, the newest `.jsonl` under `$HOME/.claude/projects/<project-folder>/`. When it passes 400K tokens, the coordinator starts no new subagent, lets every running one report, finishes each merge in hand up to its brief and its ticked box, and ends the session (ruled with Stone 12's plan on 2026-10-13). Its last line tells the owner to run /clear and then /coordinate-stone <n>, and the fresh session resumes from the pull request as "Where the stone stands" says.
+After each merge the coordinator reads its own cache read: the `usage.cache_read_input_tokens` of the newest assistant entry in the session's transcript, the newest `.jsonl` under `$HOME/.claude/projects/<project-folder>/`. When it passes 400K tokens, the coordinator starts no new subagent, lets every running one report, finishes each merge in hand up to its brief and its ticked box, and ends the session (ruled with Stone 12's plan on 2026-10-13). Its last line tells the owner to run /clear and then /mw:coordinate-stone <n>, and the fresh session resumes from the pull request as "Where the stone stands" says.
 
 ## Rulings and replans
 
