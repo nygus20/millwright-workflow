@@ -1,12 +1,12 @@
 ---
 name: coordinate-stone
-description: Coordinate an open stone's steps in a fresh session, one subagent per step, after the start-stone skill opened the stone; resume a stopped or oversized coordinator from the stone's pull request alone. Use when the owner runs /mw:coordinate-stone, with or without a stone number, after /clear, or says "coordinate Stone N" or "resume Stone N".
+description: Coordinate an open stone's steps in a fresh session, one subagent per step, after the mw:start-stone skill opened the stone; resume a stopped or oversized coordinator from the stone's pull request alone. Use when the owner runs /mw:coordinate-stone, with or without a stone number, after /clear, or says "coordinate Stone N" or "resume Stone N".
 argument-hint: "[stone number]"
 ---
 
 # Coordinate a stone
 
-The planning session ends when the stone opens (`start-stone` skill, "After approval"), and a fresh session runs this skill to build the stone. The planning's reading then stays out of the build: Stone 11's coordinator held 385K tokens of context at approval and 686K at its end, and re-read a median of 506K per turn (ruled by the owner on 2026-10-13, at Stone 11's close). The stone's pull request to `main` holds everything the coordinator needs. Its body holds the approved plan, and its comments hold the rulings and the step briefs. The owner looks nothing up and writes nothing for the hand-over.
+The planning session ends when the stone opens (`mw:start-stone` skill, "After approval"), and a fresh session runs this skill to build the stone. The planning's reading then stays out of the build: Stone 11's coordinator held 385K tokens of context at approval and 686K at its end, and re-read a median of 506K per turn (ruled by the owner on 2026-10-13, at Stone 11's close). The stone's pull request to `main` holds everything the coordinator needs. Its body holds the approved plan, and its comments hold the rulings and the step briefs. The owner looks nothing up and writes nothing for the hand-over.
 
 ## The first line
 
@@ -14,9 +14,9 @@ The session's first line names the model it runs on, as its system prompt states
 
 ## Find the stone
 
-1. List the open stones: `gh pr list --base main --state open --json number,title,headRefName,isDraft`, keeping each pull request whose head branch starts with `stone/`. Keep drafts and ready ones alike, because the `close-stone` skill marks a stone's pull request ready before its review and fix rounds.
+1. List the open stones: `gh pr list --base main --state open --json number,title,headRefName,isDraft`, keeping each pull request whose head branch starts with `stone/`. Keep drafts and ready ones alike, because the `mw:close-stone` skill marks a stone's pull request ready before its review and fix rounds.
 2. Pick one. With a stone number given (`$ARGUMENTS`), take the pull request whose branch is `stone/<n>-<slug>`. With no number and one stone open, take it. With several open, as parallel stones allow, and no number, list each one's number, title and branch, ask the owner which, and stop.
-3. With no stone open, open it first. Take the newest file under `$HOME/.claude/plans/` whose first line names a stone, such as "# Plan: Stone 12, save with migration, profiles and settings"; that folder also holds plans of other kinds. When no file names a stone, or the newest names another stone than the number given, ask the owner which plan and stop. Then run items 1 and 2 of the `start-stone` skill's "After approval" with that file as the body. A plan over GitHub's body limit of 65,536 characters keeps its prose in the body and moves its tables to a first comment that opens with `<!-- mw-plan-tables -->`, as Stone 12's pull request 306 did.
+3. With no stone open, open it first. Take the newest file under `$HOME/.claude/plans/` whose first line names a stone, such as "# Plan: Stone 12, save with migration, profiles and settings"; that folder also holds plans of other kinds. When no file names a stone, or the newest names another stone than the number given, ask the owner which plan and stop. Then run items 1 and 2 of the `mw:start-stone` skill's "After approval" with that file as the body. A plan over GitHub's body limit of 65,536 characters keeps its prose in the body and moves its tables to a first comment that opens with `<!-- mw-plan-tables -->`, as Stone 12's pull request 306 did.
 
 ## Read the stone
 
@@ -54,18 +54,18 @@ The brief the coordinator writes carries:
 - the rule that every refusal the pull request's body claims has a test that fails when the refusal breaks, and that a test of "unchanged" starts from a state that is not empty, because Stone 12's steps 5c and 5d each met a review finding where a test could not fail;
 - the report: at most about 200 words, naming the pull request's number, its changed lines, the test counts and each reversible choice, with the detail in the pull request's body (ruled by the owner on 2026-10-13).
 
-The coordinator keeps no report beyond the next decision; the pull request body and the brief keep the record. The stone's first step sets the stone's row on its workstream's page to "open" with the pull request link and adds the stone's entry to the phase plan when the stone has none, so the shared records change inside a reviewed step (AGENTS.md "Working Units and Sessions"). Before a step that edits a hook, a workflow or a preset, the owner lifts the guard hook as item 4 of the `start-stone` skill's "After approval" says.
+The coordinator keeps no report beyond the next decision; the pull request body and the brief keep the record. The stone's first step sets the stone's row on its workstream's page to "open" with the pull request link and adds the stone's entry to the phase plan when the stone has none, so the shared records change inside a reviewed step (AGENTS.md "Working Units and Sessions"). Before a step that edits a hook, a workflow or a preset, the owner lifts the guard hook as item 4 of the `mw:start-stone` skill's "After approval" says.
 
 **A subagent names its model.** A subagent inherits its parent's model, so one started from a Fable session runs on Fable unless the call names another. Every subagent this skill starts names its model: Opus for a step and for research, Haiku for a file search.
 
-**Steps run side by side.** Steps the plan marks independent start at once, each subagent in the background in its own worktree. The limit on open step pull requests and the rules for a stacked step are the `adversarial-review` skill's, "In the background, stacked".
+**Steps run side by side.** Steps the plan marks independent start at once, each subagent in the background in its own worktree. The limit on open step pull requests and the rules for a stacked step are the `mw:adversarial-review` skill's, "In the background, stacked".
 
 **After a subagent reports**, the coordinator:
-1. runs the review tool on the step's pull request with the flags the plan names, in the background, and acts on its exit code (`adversarial-review` skill);
+1. runs the review tool on the step's pull request with the flags the plan names, in the background, and acts on its exit code (`mw:adversarial-review` skill);
 2. writes the step's brief (`documents/process/agent-rulings.md`, "The records") to a file in the scratchpad, then merges with `python "${CLAUDE_PLUGIN_ROOT}/tools/merge_step.py" <pr> --brief <file>` in the background, as that skill's exit 0 says; the tool retargets a stacked step first, stops on a conflict with the stone branch before any wait, and merges at once when the stone branch changes nothing and the head is already green;
 3. reads the tool's exit code: on 0 the brief is on the stone's pull request, and the coordinator gives the owner the same text;
 4. ticks the step's box in the body: `gh pr view <stone-pr> --json body --jq .body` into a file in the scratchpad, the tick made with the file tools, then `gh pr edit <stone-pr> --body-file <file>`;
-5. removes the step's worktree from the main checkout, `git worktree remove c:/projects/millwright-worktrees/<stone-slug>-<n>`, after retargeting every step stacked on it; the branch stays until the stone's close (`adversarial-review` skill);
+5. removes the step's worktree from the main checkout, `git worktree remove c:/projects/millwright-worktrees/<stone-slug>-<n>`, after retargeting every step stacked on it; the branch stays until the stone's close (`mw:adversarial-review` skill);
 6. carries a gotcha the step learned into the next brief, or into the tracked doc that owns its rule.
 
 ## The context rule
@@ -76,7 +76,7 @@ After each merge the coordinator reads its own cache read: the `usage.cache_read
 
 The owner's approval of the plan is the ruling on each of its pre-rulings. From the first step on, the coordinator decides the calls they cover and any call it can reverse inside the stone, and stops for the rest (`documents/process/agent-rulings.md`). Pre-ruling 0 names the steps where the stone waits for the owner anyway.
 
-A plan that changes materially mid-way, as pre-ruling 5 of that doc defines the word, is replanned through the `start-stone` skill. A smaller change, such as a split step, gets a dated comment on the stone's pull request and a new row in its checklist, never a silent change.
+A plan that changes materially mid-way, as pre-ruling 5 of that doc defines the word, is replanned through the `mw:start-stone` skill. A smaller change, such as a split step, gets a dated comment on the stone's pull request and a new row in its checklist, never a silent change.
 
 ## Do not
 

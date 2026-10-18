@@ -1,6 +1,6 @@
 ---
 name: prior-art
-description: Research how shipped engines answer a hard-to-reverse design choice before the choice is made. Use when start-stone is about to write a plan, when a step meets a design choice the plan did not foresee (stop and research that one question before writing code, then take the answer to the owner), or when a phase plan is being written (one or two questions per drafted stone).
+description: Research how shipped engines answer a hard-to-reverse design choice before the choice is made. Use when mw:start-stone is about to write a plan, when a step meets a design choice the plan did not foresee (stop and research that one question before writing code, then take the answer to the owner), or when a phase plan is being written (one or two questions per drafted stone).
 ---
 
 # Prior art
