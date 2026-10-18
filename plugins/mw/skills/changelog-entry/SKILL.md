@@ -5,7 +5,7 @@ description: Write a CHANGELOG.md entry in project style, or cut a release. Use 
 
 # CHANGELOG entries and releases
 
-Two related tasks live here. Work out which one is being asked for; ask if it is ambiguous. This skill owns the CHANGELOG style; the `close-stone` skill and `documents/README.md` point here.
+Two related tasks live here. Work out which one is being asked for; ask if it is ambiguous. This skill owns the CHANGELOG style; the `mw:close-stone` skill and `documents/README.md` point here.
 
 ## The style
 
@@ -19,13 +19,14 @@ Two related tasks live here. Work out which one is being asked for; ask if it is
 
 ## When an entry lands
 
-At the latest when the stone closes; a step may add its own as it merges. For a stone whose exit test is an owner check, the close entry lands in the closing step before the owner's verdict, so the stone review reads it (`close-stone` skill, ruled by the owner on 2026-10-11); a feedback round adds its own lines in its step. Never a second "docs: close Stone N" pull request.
+At the latest when the stone closes; a step may add its own as it merges. For a stone whose exit test is an owner check, the close entry lands in the closing step before the owner's verdict, so the stone review reads it (`mw:close-stone` skill, ruled by the owner on 2026-10-11); a feedback round adds its own lines in its step. Never a second "docs: close Stone N" pull request.
 
 ## Cutting a release
 
 Only when explicitly asked to "cut a release" / "tag v0.X.Y".
 
 1. Confirm every entry under `[Unreleased]` belongs to the release being cut.
-2. Move them into a new version header: `## [0.X.Y] — Title — YYYY-MM-DD`.
+2. Move them into a new version header: `## [0.X.Y] — Title — YYYY-MM-DD`. In a repository that carries `src/core/version.h`, set its three numbers and its string to `0.X.Y` in the same commit. That file names the last tag, and the tag goes on that commit.
 3. Create the tag: `git tag v0.X.Y && git push --tags`. The tag name must match the header exactly.
-4. The release procedure beyond the tag (exports, a store or itch.io step) lands as a skill of its own when a game on the engine first ships.
+4. In a repository that carries `tests/fixture_project/CMakeLists.txt`, move its `GIT_TAG` to `v0.X.Y` and the commit in the comment beside it to the tagged commit's first eight characters (`git rev-parse --short=8 "v0.X.Y^{commit}"`), in a commit of its own after the tag. The fixture project fetches the repository at that tag, so the tag must exist first.
+5. The release procedure beyond the tag (exports, a store or itch.io step) lands as a skill of its own when a game on the engine first ships.
