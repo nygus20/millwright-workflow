@@ -177,7 +177,7 @@ finally:
         os.environ["CLAUDE_CODE_SYNC_PLUGIN_INSTALL"] = saved_sync
 check("engine: the reviewer's command is unchanged", engine_cmd, [
     "claude", "-p", "--output-format", "text", "--max-turns", "60", "--model", "claude-opus-5-5", "--effort", "high",
-    "--allowedTools", rp.allowed_tools()])
+    "--allowedTools", rp.allowed_tools(), "--disallowedTools", "PowerShell"])
 check("engine: no plugin install wait", "CLAUDE_CODE_SYNC_PLUGIN_INSTALL" in engine_env, False)
 check("plugin: the reviewer loads the plugin's own root", plugin_cmd, engine_cmd + ["--plugin-dir", str(rp.HOME)])
 check("plugin: the reviewer waits for the install", plugin_env.get("CLAUDE_CODE_SYNC_PLUGIN_INSTALL"), "1")

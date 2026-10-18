@@ -951,6 +951,10 @@ def reviewer_call(profile, turns):
         profile[2],
         "--allowedTools",
         allowed_tools(),
+        # Every allowed entry is a Bash rule, and a refused PowerShell call cannot ask for
+        # approval under -p, so the reviewer keeps to the shell the list covers.
+        "--disallowedTools",
+        "PowerShell",
     ]
     env = dict(os.environ)
     env.pop("CLAUDECODE", None)  # permit a nested session when run from inside Claude Code
