@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import warnings
 from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parent.parent
@@ -79,9 +80,23 @@ def temp_env(folder, pid=None):
 
 
 def passes(result):
-    """A hook lets the call through when it exits 0 and prints nothing."""
-    code, out, _ = result
-    return code == 0 and out == ""
+    """A hook lets the call through when it exits 0 and prints nothing, on stdout or on stderr."""
+    code, out, err = result
+    return code == 0 and out == "" and err == ""
+
+
+def compile_error(path):
+    """The warning or error compiling path raises with every warning an error, or "" when it compiles cleanly.
+
+    A SyntaxWarning, such as an invalid escape, prints at every hook run on Python 3.12, and a later Python makes it a
+    SyntaxError, which a hook wired with onFailure block turns into a denied call."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        try:
+            compile(path.read_text(encoding="utf-8"), str(path), "exec")
+        except (SyntaxError, Warning) as error:
+            return f"{type(error).__name__}: {error}"
+    return ""
 
 
 def denied(stdout):
@@ -441,6 +456,9 @@ with tempfile.TemporaryDirectory() as scratch:
     write_data(broken, minimal)
     check("data: the loader keeps a value the file sets", mw_data.load(broken)["review"]["findings_folder"],
           "notes/findings/")
+
+for path in sorted(HOOKS.glob("*.py")) + [PLUGIN / "mw_data.py", PLUGIN / "templates" / "require_plugin.py"]:
+    check(f"compile: {path.relative_to(PLUGIN).as_posix()} compiles with warnings as errors", compile_error(path), "")
 
 wiring = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))
 check("hooks.json: one top-level hooks key", list(wiring), ["hooks"])

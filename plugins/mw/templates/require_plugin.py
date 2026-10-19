@@ -66,7 +66,7 @@ def main() -> None:
     session = str(payload.get("session_id") or "") if isinstance(payload, dict) else ""
     folder = os.path.join(tempfile.gettempdir(), "mw-plugin")
     pid = os.environ.get("CLAUDE_PID")
-    names = ([session] if session and not set(session) & set("/\.") else []) + ([f"ppid-{pid}"] if pid else [])
+    names = ([session] if session and not set(session) & set("/\\.") else []) + ([f"ppid-{pid}"] if pid else [])
     found = [os.path.join(folder, name) for name in names if os.path.isfile(os.path.join(folder, name))]
     pinned_text, pinned = pin()
     if not found:
