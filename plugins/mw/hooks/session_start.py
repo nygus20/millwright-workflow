@@ -12,8 +12,11 @@ hook has no decision control, and its exit code 2 only shows stderr to the user.
    tempfile.gettempdir(): one named by the session id from the hook's input,
    and, when CLAUDE_PID is set, one named ppid-<CLAUDE_PID> by the id of the
    Claude Code process that runs the hooks. Each holds the plugin's root and
-   version as JSON. The repository-side hook templates/require_plugin.py denies an edit when neither marker exists,
-   so a session that lacks the plugin stops loudly at its first edit. The
+   version as JSON, the version read from .claude-plugin/plugin.json at run
+   time. The repository-side hook templates/require_plugin.py denies an edit
+   when neither marker exists, so a session that lacks the plugin stops loudly
+   at its first edit, and it denies one when the repository pins a version tag
+   and the marker's version differs from it. The
    second marker covers a tool call whose session id differs from the start's,
    such as a subagent's. It prunes markers older than MARKER_DAYS.
 3. It prints one context line naming the plugin's version, its root and the

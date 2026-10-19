@@ -21,7 +21,8 @@ loader refuses. PROJECT's own data file must load, and a temporary repository
 holding a copy of it must deny each file, folder and scratch pattern it lists.
 The session-start hook writes its two markers and its context line under a
 temporary folder that stands in for the system's, and the template
-templates/require_plugin.py denies an edit without a marker. Prints
+templates/require_plugin.py denies an edit without a marker, and one whose
+marker's version differs from a version tag the pin names. Prints
 `[test_hooks] N checks, M failures` and exits 1 when M is not zero.
 """
 
@@ -273,16 +274,27 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # The repository-side hook template: it denies an edit when neither marker exists, and passes with either.
     template = PLUGIN / "templates" / "require_plugin.py"
-    pinned = base / "pinned"
-    (pinned / ".claude").mkdir(parents=True)
-    (pinned / ".claude" / "settings.json").write_text(json.dumps({"extraKnownMarketplaces": {"millwright": {"source": {
-        "source": "github", "repo": "nygus20/millwright-workflow", "ref": "v9.9.9"}}}}), encoding="utf-8")
+
+
+    def pinned_repo(name, ref):
+        """A repository whose .claude/settings.json pins the marketplace at ref, or with no ref when ref is None."""
+        repo = base / name
+        (repo / ".claude").mkdir(parents=True)
+        source = {"source": "github", "repo": "nygus20/millwright-workflow"}
+        if ref is not None:
+            source["ref"] = ref
+        (repo / ".claude" / "settings.json").write_text(json.dumps({"extraKnownMarketplaces": {"millwright": {
+            "source": source}}}), encoding="utf-8")
+        return repo
+
+
+    pinned = pinned_repo("pinned", f"v{VERSION}")
     empty = base / "tmp_empty"
     empty.mkdir()
     code, out, _ = run_hook(None, pinned, pinned / "a.txt", temp_env(empty, "99"), session_id="nobody", script=template)
     check("require: denies with no marker", (code, denied(out)), (0, True))
     check("require: the reason names the plugin, the pin and what installs it",
-          ["mw@millwright" in out, "nygus20/millwright-workflow at v9.9.9" in out, "trust dialog" in out], [True] * 3)
+          ["mw@millwright" in out, f"nygus20/millwright-workflow at v{VERSION}" in out, "trust dialog" in out], [True] * 3)
     check("require: passes with the session marker",
           passes(run_hook(None, pinned, pinned / "a.txt", temp_env(tmp, "99"), session_id="session-one", script=template)),
           True)
@@ -305,6 +317,44 @@ with tempfile.TemporaryDirectory() as scratch:
     code, out, _ = run_hook(None, base / "repo_False", base / "a.txt", temp_env(empty, "99"), script=template)
     check("require: denies without a pin, naming where the pin goes", (denied(out), ".claude/settings.json" in out),
           (True, True))
+
+    # The version check: a pin at a version tag refuses a marker whose version differs, or that records none.
+    versions = base / "tmp_versions"
+    vmarkers = versions / "mw-plugin"
+    vmarkers.mkdir(parents=True)
+    for name, body in (("old", {"root": "x", "version": "0.1.5"}), ("bare", {"root": "x"}),
+                       ("current", {"root": "x", "version": "0.1.6"}), ("ppid-51", {"root": "x", "version": "0.1.5"}),
+                       ("ppid-61", {"root": "x", "version": "0.1.6"})):
+        (vmarkers / name).write_text(json.dumps(body), encoding="utf-8")
+    (vmarkers / "garbled").write_text("{not json", encoding="utf-8")
+    at_tag = pinned_repo("pinned_v016", "v0.1.6")
+
+
+    def require(repo, session_id, pid=None):
+        return run_hook(None, repo, repo / "a.txt", temp_env(versions, pid), session_id=session_id, script=template)
+
+
+    code, out, _ = require(at_tag, "old")
+    check("require: refuses a 0.1.5 marker against a v0.1.6 pin", (code, denied(out)), (0, True))
+    check("require: the refusal names both versions, the update command and the restart",
+          ["mw 0.1.5" in out, "mw 0.1.6" in out, "claude plugin update mw@millwright --scope project" in out,
+           "restart the session" in out], [True] * 4)
+    code, out, _ = require(at_tag, "bare")
+    check("require: refuses a marker with no version against a version pin", (code, denied(out)), (0, True))
+    check("require: the refusal says the marker records no version", "records no version" in out, True)
+    check("require: refuses a marker that is not JSON against a version pin", denied(require(at_tag, "garbled")[1]),
+          True)
+    check("require: passes a marker whose version matches the pin", passes(require(at_tag, "current")), True)
+    check("require: refuses a 0.1.5 process marker when the session marker is missing",
+          denied(require(at_tag, "nobody", "51")[1]), True)
+    check("require: passes a matching process marker when the session marker is missing",
+          passes(require(at_tag, "nobody", "61")), True)
+    check("require: the session marker decides over the process marker",
+          (denied(require(at_tag, "old", "61")[1]), passes(require(at_tag, "current", "51"))), (True, True))
+    for ref in ("main", "v0.1", "0.1.6", "v0.1.6-rc1", None):
+        repo = pinned_repo(f"pinned_{ref}", ref)
+        check(f"require: a pin at {ref} is no version tag, so a 0.1.5 marker passes", passes(require(repo, "old")), True)
+        check(f"require: a pin at {ref} still denies with no marker", denied(require(repo, "nobody")[1]), True)
 
     # Two repositories with different lists: each denies its own set and passes the other's, so the lists come
     # from each repository's data file and not from the hook.

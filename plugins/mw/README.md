@@ -21,7 +21,7 @@ This plugin holds the way of working that the Millwright engine and the reposito
 | `tools/run_checks.py` | Runs the three tests against one repository and prints one summary line per test. |
 | `tools/fixture/.claude/mw.json` | Gives the tests a fixed data file, the engine's lists at `v0.1.0`. |
 | `templates/mw.json` | Gives a new repository its first data file. |
-| `templates/require_plugin.py` | Gives a new repository its repository-side hook. |
+| `templates/require_plugin.py` | Gives a new repository its repository-side hook, which denies an edit when the plugin is not loaded or, from 0.1.6 on, when the loaded version differs from the pinned tag. |
 
 ## How a repository enables it
 
@@ -32,7 +32,7 @@ This plugin holds the way of working that the Millwright engine and the reposito
 ```json
 {
   "extraKnownMarketplaces": {
-    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.5"}}
+    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.6"}}
   },
   "enabledPlugins": {"mw@millwright": true},
   "hooks": {
@@ -50,15 +50,17 @@ This plugin holds the way of working that the Millwright engine and the reposito
 4. Start Claude Code in the repository's folder and accept the trust dialog. Claude Code then adds the marketplace and loads the plugin from its clone under `~/.claude/plugins/marketplaces/millwright/`.
 5. Run `python <plugin folder>/tools/run_checks.py <repository>` in the repository's CI, so a runner that loads no plugins still runs the hooks' tests against the repository's data file.
 
-A session that did not load the plugin writes no marker, and `require_plugin.py` then denies its first edit with a reason that names the pin. A session that only reads goes on. `onFailure` needs Claude Code 2.1.295 or later; an older version ignores the field.
+A session that did not load the plugin writes no marker, and `require_plugin.py` then denies its first edit with a reason that names the pin. A session that only reads goes on.
+
+From 0.1.6 on, `require_plugin.py` also compares versions. When the pin's `ref` is a version tag, `v<version>`, the hook reads the session marker, or the process marker when the session marker is missing, and denies an edit when the marker records another version or none. Its reason names both versions and the fix: run `claude plugin update mw@millwright --scope project` in the repository's folder, then restart the session. Claude Code's installed-plugins record, `~/.claude/plugins/installed_plugins.json`, keeps the old version after a pin moves until that command runs, and `/reload-plugins` alone reloads the recorded version. A pin with no `ref`, or a `ref` that is not a version tag, keeps the loaded check alone. `onFailure` needs Claude Code 2.1.295 or later; an older version ignores the field.
 
 ## The session markers
 
-`hooks/session_start.py` writes two files under the system's temporary folder, in `mw-plugin/`. One is named by the session id. The other is named `ppid-<id>` by the process id of Claude Code, which Claude Code sets as `CLAUDE_PID` in a hook's environment from v2.1.214 on (https://code.claude.com/docs/en/env-vars). Without `CLAUDE_PID`, the hook writes no second marker, and only the session marker counts. Each holds the plugin's folder and version as JSON. The second marker covers a tool call whose session id differs from the one the session started with, such as a subagent's. The hook deletes markers older than a day. A process id that the system reuses within that day lets a session without the plugin through, and the hook's header records that gap.
+`hooks/session_start.py` writes two files under the system's temporary folder, in `mw-plugin/`. One is named by the session id. The other is named `ppid-<id>` by the process id of Claude Code, which Claude Code sets as `CLAUDE_PID` in a hook's environment from v2.1.214 on (https://code.claude.com/docs/en/env-vars). Without `CLAUDE_PID`, the hook writes no second marker, and only the session marker counts. Each holds the plugin's folder and version as JSON, and the hook reads the version from `.claude-plugin/plugin.json` when it runs. The second marker covers a tool call whose session id differs from the one the session started with, such as a subagent's. The hook deletes markers older than a day. A process id that the system reuses within that day lets a session without the plugin through, and the hook's header records that gap.
 
 ## How a change is released
 
 1. Open a pull request into `main`. CI runs `python plugins/mw/tools/run_checks.py --template`.
 2. Review it with the review tool from a checkout of this repository: `python plugins/mw/tools/review_pr.py <pr> --post`. The repository's own `.claude/mw.json` gives the review its costly paths and its invariants.
-3. After the merge, raise `version` in `.claude-plugin/plugin.json`, commit, and push an annotated tag `v<version>`. Claude Code compares versions to find an update, so a tag without a version change leaves every user on the cached copy.
-4. Each repository that pins the plugin moves its `ref` to the new tag in one step. The two repositories move on the same day, because Claude Code fetches a marketplace again whenever two projects declare different sources for it. A running session takes the new version at `/reload-plugins`.
+3. Raise `version` in `.claude-plugin/plugin.json` and the example pin above, in the pull request or in a commit on `main` after the merge, then push an annotated tag `v<version>` on `main`. Claude Code compares versions to find an update, so a tag without a version change leaves every user on the cached copy.
+4. Each repository that pins the plugin moves its `ref` to the new tag in one step. The two repositories move on the same day, because Claude Code fetches a marketplace again whenever two projects declare different sources for it. Each repository's folder then takes the new version through `claude plugin update mw@millwright --scope project` and a restart of each session, because `/reload-plugins` alone reloads the version the installed-plugins record holds.
