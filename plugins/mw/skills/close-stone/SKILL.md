@@ -9,7 +9,7 @@ A stone closes when its exit test is green and every step has merged into its br
 
 ## Before the merge to `main`
 
-1. Run the full suite unfiltered (`run-tests` skill) and the lint, and cite the real count.
+1. Run the full suite unfiltered (`run-tests` skill) and the lint, and cite the real count. In a repository whose `millwright.toml` lists consumers under `[tools] consumers`, when the stone diff touches a module's public header `src/<m>/<m>.h`, also run `python tools/consumer_build.py --root . --branch <stone branch>`, which builds and tests each consumer against the stone branch. A failure is a blocking finding the stone fixes, or an issue in the consumer's repository that the consumer's plan takes before the stone merges.
 2. Merge `main` into the stone branch, so the records below are edited against their latest text; another stone may have closed meanwhile.
 3. CHANGELOG: one line per notable change under `[Unreleased]` (`mw:changelog-entry` skill), anchored `(phase N, Stone M)`.
 4. The phase plan: tick the stone's checkboxes; move anything deferred to "Inbound" with a date. Then check every Inbound line and known issue the stone's plan claimed, and every one that names the stone or its workstream: each is settled, by deleting its line from "Inbound" while the closing summary names the item and the fix (git history keeps the line's text; no "Settled," line is written, and the invariant test fails one) or by a `RESOLVED <date of the fix>` heading on its known-issues entry with one line on the fix, as that doc's format says, or it goes back to "Inbound" with a new named owner and the reason.

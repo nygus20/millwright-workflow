@@ -14,7 +14,7 @@ A stone starts with a fresh plan, every time, even when an earlier session plann
 3. That workstream's closed stones: open each row's pull request to `main` and read the approved plan in the body and the closing summary in the last comment.
 4. `documents/decisions/founding-decisions.md` for every decision the stone touches.
 5. The reference game's test files the stone names. They are the starting specification, not the specification: each test is triaged in the plan, as the next section says.
-6. Every line in the active phase plan's "Inbound" and every open entry in `documents/known-issues.md` that names the stone or its workstream. The plan answers each one: a named step settles it, or a named later stone takes it, with the reason.
+6. Every line in the active phase plan's "Inbound" and every open entry in `documents/known-issues.md` that names the stone or its workstream. The plan answers each one: a named step settles it, or a named later stone takes it, with the reason. The same holds for every open issue with the `from-game` label, which a consumer repository's session opens on this repository (`gh issue list --label from-game --state open`): the stone's first step reads each into "Inbound" as a dated line that links the issue, and the plan answers it as it answers a line.
 
 ## Write the plan
 
