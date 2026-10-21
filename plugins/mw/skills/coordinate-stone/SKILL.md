@@ -58,8 +58,6 @@ The coordinator keeps no report beyond the next decision; the pull request body 
 
 **A subagent names its model.** A subagent inherits its parent's model, so one started from a Fable session runs on Fable unless the call names another. Every subagent this skill starts names its model: Opus for a step and for research, Haiku for a file search.
 
-**A step in a consumer repository.** A step whose files live in a consumer repository, such as a game's, opens its pull request in that repository. Its worktree sits under the `worktrees` folder that repository's `.claude/mw.json` names, and its branch is cut from that repository's branch for the stone, which is also its pull request's base. The coordinator runs the review tool and the merge tool from that repository's worktree, so each reads that repository's data file and merges into its stone branch. The merge tool posts the brief on that repository's stone pull request; the coordinator then posts the same file on this stone's pull request with `gh pr comment <stone-pr> --body-file <file>`, whose Merged line names the step pull request by its number and then its URL, and ticks the step's box as item 4 below says.
-
 **Steps run side by side.** Steps the plan marks independent start at once, each subagent in the background in its own worktree. The limit on open step pull requests and the rules for a stacked step are the `mw:adversarial-review` skill's, "In the background, stacked".
 
 **After a subagent reports**, the coordinator:
