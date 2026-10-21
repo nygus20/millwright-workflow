@@ -20,6 +20,16 @@
             "onFailure": "block"
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'if command -v python3 >/dev/null 2>&1; then exec python3 \"$0\"; else exec python \"$0\"; fi' \"${CLAUDE_PLUGIN_ROOT}/hooks/deny_kill_by_name.py\"",
+            "onFailure": "block"
+          }
+        ]
       }
     ],
     "PostToolUse": [

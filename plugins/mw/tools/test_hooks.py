@@ -1,4 +1,4 @@
-"""Checks for the plugin's four hooks under hooks/, the hooks.json that wires them, and the repository-side hook template.
+"""Checks for the plugin's five hooks under hooks/, the hooks.json that wires them, and the repository-side hook template.
 
 Usage:
     python tools/test_hooks.py [PROJECT]
@@ -22,7 +22,9 @@ holding a copy of it must deny each file, folder and scratch pattern it lists.
 The session-start hook writes its two markers and its context line under a
 temporary folder that stands in for the system's, and the template
 templates/require_plugin.py denies an edit without a marker, and one whose
-marker's version differs from a version tag the pin names. Prints
+marker's version differs from a version tag the pin names. The kill hook
+denies each form of a stop by a process's name it lists and passes a stop by
+PID and a listing alone. Prints
 `[test_hooks] N checks, M failures` and exits 1 when M is not zero.
 """
 
@@ -351,9 +353,10 @@ with tempfile.TemporaryDirectory() as scratch:
 
     code, out, _ = require(at_tag, "old")
     check("require: refuses a 0.1.5 marker against a v0.1.6 pin", (code, denied(out)), (0, True))
-    check("require: the refusal names both versions, the update command and the restart",
-          ["mw 0.1.5" in out, "mw 0.1.6" in out, "claude plugin update mw@millwright --scope project" in out,
-           "restart the session" in out], [True] * 4)
+    check("require: the refusal names both versions, the update command, the worktree's install command and the restart",
+          ["mw 0.1.5" in out, "mw 0.1.6" in out, "claude plugin update mw@millwright --scope project` in this "
+           "repository's main checkout" in out, "`claude plugin install mw@millwright --scope local` inside a worktree"
+           in out, "restart the session" in out], [True] * 5)
     code, out, _ = require(at_tag, "bare")
     check("require: refuses a marker with no version against a version pin", (code, denied(out)), (0, True))
     check("require: the refusal says the marker records no version", "records no version" in out, True)
@@ -457,6 +460,40 @@ with tempfile.TemporaryDirectory() as scratch:
     check("data: the loader keeps a value the file sets", mw_data.load(broken)["review"]["findings_folder"],
           "notes/findings/")
 
+    # The kill hook: it denies a stop by name in either shell and passes a stop by PID and a listing alone.
+    kill_hook = "deny_kill_by_name.py"
+
+
+    def run_kill(command=None, raw=None):
+        """(exit code, stdout, stderr) of the kill hook run on a Bash payload holding command, or on raw as it stands."""
+        text = raw if raw is not None else json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+        proc = subprocess.run([sys.executable, str(HOOKS / kill_hook)], input=text, capture_output=True, text=True,
+                              encoding="utf-8", env={**os.environ, "CLAUDE_PROJECT_DIR": str(project)}, cwd=project,
+                              timeout=30)
+        return proc.returncode, proc.stdout, proc.stderr
+
+
+    for command in ("taskkill /F /IM mw_tests.exe", "taskkill -im mw_tests.exe /f", "TASKKILL /T /F /IM mw.exe",
+                    "Stop-Process -Name mw_tests", "stop-process -name mw_tests -Force", "spps -Name mw_tests",
+                    "kill -Name mw_tests", "Stop-Process -ProcessName mw_tests",
+                    "Get-Process mw_tests | Stop-Process", "gps mw_tests | spps",
+                    "Get-Process mw* | Where-Object { $_.Id -ne $PID } | kill", "pkill mw_tests", "pkill -9 -f mw_tests",
+                    "/usr/bin/pkill mw_tests", "killall mw_tests", "wmic process where name='mw_tests.exe' delete",
+                    "cd build && taskkill /F /IM mw_tests.exe"):
+        code, out, err = run_kill(command)
+        check(f"kill: denies {command}", (code, denied(out), err), (0, True, ""))
+    out = run_kill("taskkill /F /IM mw_tests.exe")[1]
+    check("kill: the reason names the PID forms", ["taskkill /F /PID <pid>" in out, "Stop-Process -Id <pid>" in out,
+                                                  "kill <pid>" in out], [True] * 3)
+    for command in ("taskkill /F /PID 123", "Stop-Process -Id 123", "kill 123", "kill -9 123", "pgrep mw_tests",
+                    "Get-Process mw_tests", "Get-Process mw_tests | Select-Object Id",
+                    "python tools/run_tests.py --name mw_tests", "git log --grep=killed"):
+        check(f"kill: passes {command}", passes(run_kill(command)), True)
+    check("kill: passes an unreadable payload", passes(run_kill(raw="{not json")), True)
+    check("kill: passes a command that is not a string", passes(run_kill(["pkill mw_tests"])),
+          True)
+    check("kill: passes a payload with no tool input", passes(run_kill(raw='{"tool_name": "Bash"}')), True)
+
 for path in sorted(HOOKS.glob("*.py")) + [PLUGIN / "mw_data.py", PLUGIN / "templates" / "require_plugin.py"]:
     check(f"compile: {path.relative_to(PLUGIN).as_posix()} compiles with warnings as errors", compile_error(path), "")
 
@@ -465,18 +502,19 @@ check("hooks.json: one top-level hooks key", list(wiring), ["hooks"])
 entries = [(event, entry["matcher"], hook) for event, items in wiring["hooks"].items() for entry in items
            for hook in entry["hooks"]]
 wired = {(event, matcher, Path(hook["command"].split('"')[-2]).name) for event, matcher, hook in entries}
-check("hooks.json: the four hooks and their matchers", wired, {
+check("hooks.json: the five hooks and their matchers", wired, {
     ("PreToolUse", "Edit|Write|MultiEdit", "deny_guard_config.py"),
     ("PreToolUse", "Read", "deny_scratch_read.py"),
+    ("PreToolUse", "Bash|PowerShell", "deny_kill_by_name.py"),
     ("PostToolUse", "Edit|Write|MultiEdit", "no_emoji_md.py"),
     ("SessionStart", "startup|resume|clear|compact|fork", "session_start.py"),
 })
 check("hooks.json: every wired hook exists", all((HOOKS / name).is_file() for _, _, name in wired), True)
 check("hooks.json: every command runs from the plugin's root",
       all('"${CLAUDE_PLUGIN_ROOT}/hooks/' in hook["command"] for _, _, hook in entries), True)
-check("hooks.json: the two PreToolUse hooks block when they fail",
+check("hooks.json: the three PreToolUse hooks block when they fail",
       sorted((matcher, hook.get("onFailure")) for event, matcher, hook in entries if event == "PreToolUse"),
-      [("Edit|Write|MultiEdit", "block"), ("Read", "block")])
+      [("Bash|PowerShell", "block"), ("Edit|Write|MultiEdit", "block"), ("Read", "block")])
 manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
 check("plugin.json: the name and a version", (manifest.get("name"), bool(manifest.get("version"))), ("mw", True))
 style = (PLUGIN / "output-styles" / "millwright.md").read_text(encoding="utf-8")

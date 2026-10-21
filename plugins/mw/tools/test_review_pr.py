@@ -227,6 +227,40 @@ finally:
 check("fetch: a failure retries once after the pause", (retried.returncode, len(fetches), fetches[1]), (0, 3, rp.FETCH_RETRY_SECONDS))
 check("fetch: the retry fetches the same ref", fetches[0] == fetches[2] == ["git", "fetch", "origin", "stone/x"], True)
 
+# A ref lock reruns the fetch with the lock pauses; a lock that never clears stops after three tries with no plain
+# retry; another error gets one try in the lock loop, then the plain retry.
+LOCKED = "error: cannot lock ref 'refs/remotes/origin/stone/x': is at 1111 but expected 2222"
+
+
+def fetched(replies):
+    """(exit code, fetches run, pauses, the stderr line) of fetch_ref over scripted (exit code, stderr) replies."""
+    calls, pauses, saved = [], [], (rp.run, rp.time.sleep)
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        code, stderr = replies[min(len(calls), len(replies)) - 1]  # the last reply repeats
+        return rp.subprocess.CompletedProcess(cmd, code, "", stderr)
+    rp.run, rp.time.sleep = run, pauses.append
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            code = rp.fetch_ref("stone/x").returncode
+    finally:
+        rp.run, rp.time.sleep = saved
+    return code, len(calls), pauses, err.getvalue()
+
+
+for message in (LOCKED, "fatal: Unable to create '/r/.git/refs/remotes/origin/x.lock': File exists.",
+                "error: unable to update local ref 'refs/remotes/origin/x'"):
+    check(f"fetch: the ref lock names {message[:40]}", bool(rp.REF_LOCK.search(message)), True)
+code, tries, pauses, said = fetched([(1, LOCKED), (0, "")])
+check("fetch: a lock that clears on the second try succeeds after one lock pause, with a line",
+      (code, tries, pauses, "met a ref lock; try 2 of 3" in said), (0, 2, [2], True))
+check("fetch: a lock that never clears stops after three tries, with no plain retry",
+      fetched([(1, LOCKED)] * 5)[:3], (1, 3, [2, 5]))
+check("fetch: another error gets one try, then the plain retry", fetched([(1, "fatal: early EOF"), (1, "fatal: early EOF"),
+                                                                          (0, "")])[:3], (1, 2, [rp.FETCH_RETRY_SECONDS]))
+
 # parse_marks and comment_body round-trip; a comment from before the marks is round 1.
 pr = {"headRefOid": HEAD, "headRefName": "step/x/1-y", "baseRefName": "stone/x"}
 review = "## Blocking\n- p:1 bad.\n\n## Unresearched choices\n- none\n\n## Verified\n- ok"

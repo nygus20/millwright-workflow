@@ -130,23 +130,30 @@ check("comment: another commit, or a quote of the marker",
        ms.commented_run([{"body": "> " + tests_comment("a" * 40, 5)["body"]}], "a" * 40)], [None, None])
 
 ERROR = "error"  # a run list or step list gh fails to read
+LOCKED = "error: cannot lock ref 'refs/remotes/origin/stone/12-save': is at 1111 but expected 2222"
 
 
 class Fake:
     """Answers gh and git from a scenario, records every call, and moves a clock instead of sleeping.
 
     tree is the merge-tree outcome: "same" as the head's tree, "differs", or "conflict"; bases is how many
-    merge bases `git merge-base --all` names for the head and the stone branch, or ERROR when the call fails."""
+    merge bases `git merge-base --all` names for the head and the stone branch, or ERROR when the call fails; locked
+    maps the start of a git command to how many of its runs fail on a ref lock before it succeeds."""
 
     def __init__(self, run_lists, base="stone/12-save", jobs=SUMMARY, deletes="false", below=True, moved=False,
-                 tree="same", comments=(), bases=1):
+                 tree="same", comments=(), bases=1, locked=None):
         self.calls, self.clock, self.merged, self.sleeps = [], created + 60, False, []
         self.run_lists, self.base, self.deletes, self.below, self.moved = run_lists, base, deletes, below, moved
         self.jobs = jobs if isinstance(jobs, tuple) else (jobs,)
-        self.tree, self.comments, self.bases = tree, list(comments), bases
+        self.tree, self.comments, self.bases, self.locked = tree, list(comments), bases, dict(locked or {})
 
     def __call__(self, cmd, cwd=None):
         self.calls.append(cmd)
+        line = " ".join(cmd)
+        for start, left in self.locked.items():
+            if line.startswith(start) and left:
+                self.locked[start] = left - 1
+                return subprocess.CompletedProcess(cmd, 1, "", LOCKED)
         reply = self.answer(" ".join(cmd))
         code, reply = reply if isinstance(reply, tuple) else (0, reply)
         return subprocess.CompletedProcess(cmd, code, reply if isinstance(reply, str) else json.dumps(reply), "")
@@ -291,6 +298,45 @@ fake = Fake([GREEN], jobs=(EMPTY, EMPTY, SUMMARY))
 check("an empty step list polls as unknown, not as no run built", (scenario(fake)[0], fake.sleeps), (0, [40, 80]))
 code, merges, said = scenario(Fake([ERROR]))
 check("a gh error to the overall limit: no merge, never no run built", (code, merges, "not done" in said), (2, [], True))
+
+# git_retrying reruns a command whose stderr names a ref lock, with the pauses, and returns any other failure at once.
+def retrying(replies):
+    """(exit code, commands run, pauses, printed) of git_retrying over scripted (exit code, stderr) replies."""
+    calls, pauses, saved = [], [], (ms.run, ms.sleep)
+
+    def run(cmd, cwd=None):
+        calls.append(cmd)
+        code, stderr = replies[min(len(calls), len(replies)) - 1]  # the last reply repeats
+        return subprocess.CompletedProcess(cmd, code, "", stderr)
+    ms.run, ms.sleep = run, pauses.append
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            code = ms.git_retrying(["git", "fetch", "origin", "x"]).returncode
+    finally:
+        ms.run, ms.sleep = saved
+    return code, len(calls), pauses, out.getvalue()
+
+
+for message in (LOCKED, "fatal: Unable to create '/r/.git/refs/remotes/origin/x.lock': File exists.",
+                "error: unable to update local ref 'refs/remotes/origin/x'"):
+    check(f"ref lock: names {message[:40]}", bool(ms.REF_LOCK.search(message)), True)
+code, tries, pauses, said = retrying([(1, LOCKED), (0, "")])
+check("ref lock: a lock that clears on the second try succeeds after one pause, with a line",
+      (code, tries, pauses, "met a ref lock; try 2 of 3" in said), (0, 2, [2], True))
+check("ref lock: a lock that never clears stops after three tries", retrying([(1, LOCKED)] * 4)[:3], (1, 3, [2, 5]))
+check("ref lock: another error returns after one try", retrying([(1, "fatal: repository not found"), (0, "")])[:3],
+      (1, 1, []))
+fake = Fake([GREEN], tree="differs", locked={"git fetch": 9})
+code, merges, said = scenario(fake)
+check("ref lock: a fetch that stays locked stops the tool after three fetches, with git's message, nothing pushed",
+      (code, sum(c[:2] == ["git", "fetch"] for c in fake.calls), fake.sleeps, merges, pushes(fake),
+       "could not fetch" in said and "cannot lock ref" in said), (2, 3, [2, 5], [], [], True))
+fake = Fake([GREEN], tree="differs", locked={"git push": 1})
+code, merges, said = scenario(fake)
+check("ref lock: a push that clears on the second try pushes again and the step merges",
+      (code, sum(c[:2] == ["git", "push"] for c in fake.calls), merges),
+      (0, 2, [["gh", "pr", "merge", "42", "--merge", "--match-head-commit", "b" * 40]]))
 
 # The root is the git top level of the caller's folder, not the tool's checkout. Outside a repository main stops
 # before any gh or git call reaches the fake.
