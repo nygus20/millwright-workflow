@@ -15,7 +15,10 @@ v<version>, the hook reads the session marker, or the process marker when the se
 missing, and denies the edit when the marker's version differs from the tag's. A marker without a
 version counts as a mismatch. Claude Code's installed-plugins record keeps the old version after
 the pin moves, and /reload-plugins reloads the recorded one, so the reason names
-`claude plugin update mw@millwright --scope project` and a restart. A pin with no ref, or a ref
+`claude plugin update mw@millwright --scope project` for the main checkout,
+`claude plugin install mw@millwright --scope local` for a worktree, and a restart. The record
+is kept per folder, and the update command run inside a worktree rewrote the main checkout's
+record on 2026-10-21. A pin with no ref, or a ref
 that is not a version tag, keeps the loaded check alone.
 Known gap: a process id reused within a day passes; the plugin's session_start.py says why.
 """
@@ -84,7 +87,8 @@ def main() -> None:
     deny(f"This session loaded {loaded_text} and this repository pins mw {pinned} ({pinned_text}, in "
          ".claude/settings.json). Claude Code's installed-plugins record keeps the old version after a pin moves, "
          "and /reload-plugins reloads the recorded version. Run `claude plugin update mw@millwright --scope project` "
-         "in this repository's folder, then restart the session.")
+         "in this repository's main checkout, or `claude plugin install mw@millwright --scope local` inside a worktree, "
+         "which records the worktree's own folder, then restart the session.")
 
 
 if __name__ == "__main__":

@@ -8,9 +8,10 @@ This plugin holds the way of working that the Millwright engine and the reposito
 |---|---|
 | `.claude-plugin/plugin.json` | Names the plugin `mw` and carries its version. |
 | `skills/` | Holds seven skills: `start-stone`, `coordinate-stone`, `close-stone`, `adversarial-review`, `changelog-entry`, `prior-art` and `port-triage`. A session invokes each as `/mw:<skill>`. Each skill names the plugin's tools through `${CLAUDE_PLUGIN_ROOT}`, which Claude Code replaces with the plugin's folder when the skill loads. |
-| `hooks/hooks.json` | Wires the four hooks. The two PreToolUse hooks carry `"onFailure": "block"`, so a hook that fails to run stops the tool call. |
+| `hooks/hooks.json` | Wires the five hooks. The three PreToolUse hooks carry `"onFailure": "block"`, so a hook that fails to run stops the tool call. |
 | `hooks/deny_guard_config.py` | Denies an edit to a file or folder that the data file's `guard` key lists, and to the data file itself. |
 | `hooks/deny_scratch_read.py` | Denies a read of a file at the repository's root that matches the data file's `scratch_patterns`. |
+| `hooks/deny_kill_by_name.py` | Denies a `Bash` or `PowerShell` command that stops a process by its name, such as `taskkill /IM`, `Stop-Process -Name` or `pkill`, because a name matches every session's copy of the program. Its reason names the stop by PID. |
 | `hooks/no_emoji_md.py` | Reports an emoji written into a `.md` file, so the agent removes it. |
 | `hooks/session_start.py` | Sets `core.hooksPath` when the repository holds `git-hooks/`, writes the session's two markers, and prints one context line naming the plugin's version, its folder and the repository's worktree folder. |
 | `mw_data.py` | Loads `.claude/mw.json`. It refuses a missing file, an unknown version and a missing required key, and it fills the review section's defaults. |
@@ -32,7 +33,7 @@ This plugin holds the way of working that the Millwright engine and the reposito
 ```json
 {
   "extraKnownMarketplaces": {
-    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.7"}}
+    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.8"}}
   },
   "enabledPlugins": {"mw@millwright": true},
   "hooks": {
@@ -52,7 +53,7 @@ This plugin holds the way of working that the Millwright engine and the reposito
 
 A session that did not load the plugin writes no marker, and `require_plugin.py` then denies its first edit with a reason that names the pin. A session that only reads goes on.
 
-From 0.1.6 on, `require_plugin.py` also compares versions. When the pin's `ref` is a version tag, `v<version>`, the hook reads the session marker, or the process marker when the session marker is missing, and denies an edit when the marker records another version or none. Its reason names both versions and the fix: run `claude plugin update mw@millwright --scope project` in the repository's folder, then restart the session. Claude Code's installed-plugins record, `~/.claude/plugins/installed_plugins.json`, keeps the old version after a pin moves until that command runs, and `/reload-plugins` alone reloads the recorded version. A pin with no `ref`, or a `ref` that is not a version tag, keeps the loaded check alone. `onFailure` needs Claude Code 2.1.295 or later; an older version ignores the field.
+From 0.1.6 on, `require_plugin.py` also compares versions. When the pin's `ref` is a version tag, `v<version>`, the hook reads the session marker, or the process marker when the session marker is missing, and denies an edit when the marker records another version or none. Its reason names both versions and the fix: run `claude plugin update mw@millwright --scope project` in the repository's main checkout, or `claude plugin install mw@millwright --scope local` inside a worktree, then restart the session. Claude Code's installed-plugins record, `~/.claude/plugins/installed_plugins.json`, keeps the old version after a pin moves until that command runs, and `/reload-plugins` alone reloads the recorded version. The record holds one entry per folder, and the update command run inside a worktree rewrites the main checkout's entry, so a worktree takes the install command. A pin with no `ref`, or a `ref` that is not a version tag, keeps the loaded check alone. `onFailure` needs Claude Code 2.1.295 or later; an older version ignores the field.
 
 ## The session markers
 
@@ -63,4 +64,4 @@ From 0.1.6 on, `require_plugin.py` also compares versions. When the pin's `ref` 
 1. Open a pull request into `main`. CI runs `python plugins/mw/tools/run_checks.py --template`.
 2. Review it with the review tool from a checkout of this repository: `python plugins/mw/tools/review_pr.py <pr> --post`. The repository's own `.claude/mw.json` gives the review its costly paths and its invariants.
 3. Raise `version` in `.claude-plugin/plugin.json` and the example pin above, in the pull request or in a commit on `main` after the merge, then push an annotated tag `v<version>` on `main`. Claude Code compares versions to find an update, so a tag without a version change leaves every user on the cached copy.
-4. Each repository that pins the plugin moves its `ref` to the new tag in one step. The two repositories move on the same day, because Claude Code fetches a marketplace again whenever two projects declare different sources for it. Each repository's folder then takes the new version through `claude plugin update mw@millwright --scope project` and a restart of each session, because `/reload-plugins` alone reloads the version the installed-plugins record holds.
+4. Each repository that pins the plugin moves its `ref` to the new tag in one step. The two repositories move on the same day, because Claude Code fetches a marketplace again whenever two projects declare different sources for it. Each repository's main checkout then takes the new version through `claude plugin update mw@millwright --scope project`, each of its worktrees through `claude plugin install mw@millwright --scope local`, and each session restarts, because `/reload-plugins` alone reloads the version the installed-plugins record holds.

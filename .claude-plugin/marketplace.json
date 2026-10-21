@@ -8,7 +8,7 @@
     {
       "name": "mw",
       "source": "./plugins/mw",
-      "description": "The Millwright way of working: the stone and step skills, four hooks, the output style, and the review and merge tools."
+      "description": "The Millwright way of working: the stone and step skills, five hooks, the output style, and the review and merge tools."
     }
   ]
 }

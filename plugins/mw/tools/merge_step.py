@@ -21,7 +21,8 @@ One command does a step's merge mechanics (the owner's ruling of 2026-10-13). In
    pushes: a step that merged the stone branch in while its step below was open keeps two bases
    after that step lands, and CI's three-dot diff reads the older one and counts the step
    below's lines as the step's (documents/gotcha-history.md, "a stacked step's size check
-   counted the step below"). The pushed merge leaves one base.
+   counted the step below"). The pushed merge leaves one base. The fetch and the push run again,
+   up to three tries, when git names a ref lock, because every worktree shares one .git.
 4. It waits for CI on the head. Only runs whose head SHA is the head count. The newest green
    run that wrote the result summary decides, as a build or a "no code path changed" run does
    and a label or body edit's run does not, and a run still going after it does not block. A
@@ -70,6 +71,10 @@ MAX_POLL_SECONDS = 160  # the backoff's ceiling while GitHub's reply is unknown
 NO_RUN_SECONDS = 180  # GitHub lists a pull request's run within seconds of the push
 QUEUED_SECONDS = 600  # documents/process/ci-runner.md: a run queued past ten minutes gets the runner check
 WAIT_SECONDS = 3600  # twice the build job's 30-minute limit, so a queued start still fits
+# Every worktree of a repository shares one .git, so two fetches, or a fetch and a push, race on one ref file.
+REF_LOCK = re.compile(r"cannot lock ref|Unable to create .*\.lock|unable to update local ref", re.IGNORECASE)
+GIT_LOCK_TRIES = 3
+GIT_LOCK_SECONDS = (2, 5)  # the pauses before the second and the third try: another session's fetch takes seconds
 
 
 def run(cmd, cwd=None):
@@ -78,6 +83,21 @@ def run(cmd, cwd=None):
 
 sleep = time.sleep
 now = time.time
+
+
+def git_retrying(cmd):
+    """Run a git command, rerunning it while its stderr names a ref lock, up to GIT_LOCK_TRIES tries in all.
+
+    Any other failure, and the last locked try, returns at once. A push that landed on the remote and failed only its
+    local ref update succeeds on the rerun, which pushes nothing."""
+    for attempt in range(GIT_LOCK_TRIES):
+        proc = run(cmd)
+        if proc.returncode == 0 or not REF_LOCK.search(proc.stderr or "") or attempt == GIT_LOCK_TRIES - 1:
+            return proc
+        pause = GIT_LOCK_SECONDS[min(attempt, len(GIT_LOCK_SECONDS) - 1)]
+        print(f"[merge_step] {' '.join(cmd[:2])} met a ref lock; try {attempt + 2} of {GIT_LOCK_TRIES} in {pause} s")
+        sleep(pause)
+    return proc
 
 
 class Stop(Exception):
@@ -223,7 +243,7 @@ def ci_state(pr, head):
 
 def merge_stone_in(branch, sha, stone):
     """Merge origin/<stone> into the head with no worktree, pushing a merge that changes the tree or leaves one base."""
-    fetched = run(["git", "fetch", "origin", branch, stone])
+    fetched = git_retrying(["git", "fetch", "origin", branch, stone])
     if fetched.returncode != 0:
         raise Stop(2, f"could not fetch {branch} and {stone}: {fetched.stderr.strip()}")
     merged = run(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", sha, f"origin/{stone}"])
@@ -247,7 +267,7 @@ def merge_stone_in(branch, sha, stone):
     if made.returncode != 0:
         raise Stop(2, f"could not write the merge commit: {made.stderr.strip()}")
     commit = made.stdout.strip()
-    pushed = run(["git", "push", "origin", f"{commit}:refs/heads/{branch}"])
+    pushed = git_retrying(["git", "push", "origin", f"{commit}:refs/heads/{branch}"])
     if pushed.returncode != 0:
         raise Stop(2, f"could not push {branch}: {pushed.stderr.strip()}")
     print(f"[merge_step] merged {stone} into {branch} and pushed {commit[:8]}")

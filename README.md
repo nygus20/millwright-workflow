@@ -1,6 +1,6 @@
 # millwright-workflow
 
-This repository is the Claude Code marketplace `millwright`. It lists one plugin, `mw`, under `plugins/mw/`, which holds the Millwright engine's process skills, four hooks, the output style, the review tool and the merge tool. `plugins/mw/README.md` says what the plugin holds, how a repository enables it and how a change is released.
+This repository is the Claude Code marketplace `millwright`. It lists one plugin, `mw`, under `plugins/mw/`, which holds the Millwright engine's process skills, five hooks, the output style, the review tool and the merge tool. `plugins/mw/README.md` says what the plugin holds, how a repository enables it and how a change is released.
 
 ## Layout
 

@@ -162,6 +162,10 @@ VENDORED_NAMES_SHOWN = 40
 FULL_TURNS = 60
 FIX_CHECK_TURNS = 30  # a fix check reads the earlier findings and the fix commits only
 FETCH_RETRY_SECONDS = 5  # long enough for a concurrent fetch in the same checkout to finish
+# Every worktree of a repository shares one .git, so two fetches race on one ref file; merge_step.py holds the same.
+REF_LOCK = re.compile(r"cannot lock ref|Unable to create .*\.lock|unable to update local ref", re.IGNORECASE)
+GIT_LOCK_TRIES = 3
+GIT_LOCK_SECONDS = (2, 5)  # the pauses before the second and the third try: another session's fetch takes seconds
 
 BLOCKING_RULE = """What blocks. A finding goes under Blocking only if it shows one of these:
 - the step's own claim or the stone's exit test is not met;
@@ -273,16 +277,30 @@ def run(cmd, **kw):
     return subprocess.run(cmd, text=True, capture_output=True, encoding="utf-8", errors="replace", **kw)
 
 
+def git_retrying(cmd):
+    """Run a git command, rerunning it while its stderr names a ref lock, up to GIT_LOCK_TRIES tries in all."""
+    for attempt in range(GIT_LOCK_TRIES):
+        proc = run(cmd, cwd=ROOT)
+        if proc.returncode == 0 or not REF_LOCK.search(proc.stderr or "") or attempt == GIT_LOCK_TRIES - 1:
+            return proc
+        pause = GIT_LOCK_SECONDS[min(attempt, len(GIT_LOCK_SECONDS) - 1)]
+        sys.stderr.write(f"[review_pr] {' '.join(cmd[:2])} met a ref lock; "
+                         f"try {attempt + 2} of {GIT_LOCK_TRIES} in {pause} s\n")
+        time.sleep(pause)
+    return proc
+
+
 def fetch_ref(ref):
-    """`git fetch origin <ref>` in the checkout, retried once after a pause.
+    """`git fetch origin <ref>` in the checkout, rerun on a ref lock, and retried once after a pause on another failure.
 
     Two runs fetching at once raced on one remote-tracking ref and ended a round with no review
-    (documents/known-issues.md, 2026-10-12); the second try comes after the first has finished.
+    (documents/known-issues.md, 2026-10-12); the second try comes after the first has finished. A lock
+    that outlasts its three tries returns the failure with no plain retry.
     """
-    proc = run(["git", "fetch", "origin", ref], cwd=ROOT)
-    if proc.returncode != 0:
+    proc = git_retrying(["git", "fetch", "origin", ref])
+    if proc.returncode != 0 and not REF_LOCK.search(proc.stderr or ""):
         time.sleep(FETCH_RETRY_SECONDS)
-        proc = run(["git", "fetch", "origin", ref], cwd=ROOT)
+        proc = git_retrying(["git", "fetch", "origin", ref])
     return proc
 
 
