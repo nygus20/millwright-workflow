@@ -3,7 +3,7 @@
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/tools/review_pr.py" <pr-number> [--stone N] [--context FILE]... [--post]
                                                       [--full] [--extra-round [agent|owner]] [--force-review]
-                                                      [--model NAME] [--effort LEVEL] [--max-turns N]
+                                                      [--model NAME] [--effort LEVEL] [--max-turns N] [--no-wait-ci]
 
 What it does. It fetches the pull request's title and body with `gh` and its
 diff with git, from the merge base (GitHub refuses a pull-request diff over 300
@@ -12,7 +12,8 @@ builds a prompt that asks a reviewer to refute the change against the stone's
 exit test and the repository's invariants, and runs that prompt in a separate
 `claude -p` process. The reviewer is not the session that wrote the code: it
 starts with an empty conversation, sees only what this script gives it plus
-the repository itself, and may read files and run the suite to check claims.
+the repository itself, reads CI's suite result for the head commit, which the
+tool waits for, and runs at most a filtered suite.
 It works in a detached git worktree at the pull request's head commit, so what
 it reads is what the pull request contains, not the author's checkout.
 With --post the findings go to the pull request as one comment; without it
@@ -90,6 +91,16 @@ with a printed warning that its Verified section may rest on a run nobody read. 
 from the data file's invariants heading. The reviewer starts in the reviewed
 worktree, so its own system prompt carries that repository's CLAUDE.md.
 
+CI's result. Once the round is planned and before the reviewer starts, the
+tool lists the pull request's comments for CI's `mw-tests` comment on the head
+commit, every CI_POLL_SECONDS for up to CI_WAIT_SECONDS, ten minutes, and
+prints the run it read or that it starts without one; --no-wait-ci lists once.
+The prompt carries the comment's body under "CI's suite result on <head7>", or
+a sentence saying CI has not posted it yet. Both prompts forbid a full suite
+run and allow one filtered to the test files a finding names. The reviewer
+runs with MW_REVIEWER=1 in its environment, and the suite wrapper refuses an
+unfiltered run under it (the engine's issue 686).
+
 From the plugin. The plugin's copy of this tool sets FROM_PLUGIN, and then the
 reviewer loads that copy of the plugin with --plugin-dir and waits for its
 plugins to install before its first turn. The engine's copy leaves the
@@ -128,6 +139,21 @@ FOREGROUND = (
     "Run every command in the foreground with a timeout. Never start a background task, and never end your "
     "turn to wait for one: your reply ends the session, and nothing reads a later report."
 )
+# The reviewer reads CI's result instead of queueing a full run behind the machine's one suite slot (the engine's
+# issue 686).
+SUITE_RULE = (
+    "Never start a full suite run: CI has run the full suite under the sanitizers on the reviewed commit and posted "
+    "the result the section below carries, and the merge tool refuses a merge without a green run on that commit. "
+    "When a finding needs a run of your own, such as a new test that must be seen to fail, run the suite filtered to "
+    "the test files the finding names, through the suite command your grants allow and its file-name words; a "
+    "filtered run still takes the machine's one suite slot, for seconds. When the section says CI has not posted its "
+    "result for the commit yet, read the pull request's comments once more with `gh pr view` before you write your "
+    "headings, and say under Verified what you read."
+)
+# Set in the reviewer's environment; the suite wrapper refuses an unfiltered run under it (the engine's issue 686).
+REVIEWER_ENV = "MW_REVIEWER"
+CI_SECTION = "# CI's suite result on {head7}"
+CI_ABSENT = "CI has not posted its suite result for this commit yet; the merge tool waits for it before any merge."
 # A reply whose last paragraph says it waits on something it started: the known issue of 2026-10-11, where
 # three rounds ended on a background build and exited 2 with no review.
 WAIT_ANNOUNCED = re.compile(
@@ -166,6 +192,14 @@ FETCH_RETRY_SECONDS = 5  # long enough for a concurrent fetch in the same checko
 REF_LOCK = re.compile(r"cannot lock ref|Unable to create .*\.lock|unable to update local ref", re.IGNORECASE)
 GIT_LOCK_TRIES = 3
 GIT_LOCK_SECONDS = (2, 5)  # the pauses before the second and the third try: another session's fetch takes seconds
+# The comment CI's build job posts on the pull request, and the line naming the commit and the run it summarised:
+# merge_step.py holds the same two, and the workflow's comment step writes them; the two tools import neither.
+TESTS_MARK = "<!-- mw-tests -->"
+TESTS_LINE = re.compile(r"^Commit ([0-9a-f]{8}), \[run (\d+)\]", re.M)
+CI_WAIT_SECONDS = 600  # merge_step.py's queued limit: CI's run takes about four minutes once a runner has it
+CI_POLL_SECONDS = 20
+sleep = time.sleep  # the CI wait's clock and pause, replaced by its tests
+now = time.time
 
 BLOCKING_RULE = """What blocks. A finding goes under Blocking only if it shows one of these:
 - the step's own claim or the stone's exit test is not met;
@@ -192,14 +226,14 @@ Be specific and terse. No preamble, no summary paragraph, no praise.
 FIX_CHECK_INSTRUCTIONS = f"""You are checking the fixes to one pull request in the <repository> repository. An earlier review of this pull request is below, and the diff below holds only the commits made since that review. Do two things:
 1. For each finding under the earlier review's Blocking heading, decide whether the new commits fix it. An unfixed one goes under Blocking again.
 2. Check the new commits for anything they break.
-Do not review code the new commits leave untouched; the earlier round did that. You did not write the fixes and must not assume they work: read the repository at the pull request head, and compile a Python tool with `python -m py_compile` when a fix touches one. {FOREGROUND} Do not comment on style; the lint owns that.
+Do not review code the new commits leave untouched; the earlier round did that. You did not write the fixes and must not assume they work: read the repository at the pull request head and CI's suite result below, and compile a Python tool with `python -m py_compile` when a fix touches one. {SUITE_RULE} {FOREGROUND} Do not comment on style; the lint owns that.
 
 {BLOCKING_RULE}
 
 {OUTPUT_FORMAT}
 Under Verified, give one bullet per earlier blocking finding that is fixed, with how you checked it."""
 
-INSTRUCTIONS = """You are reviewing one pull request in the <repository> repository. Your job is to refute it: find every way the change fails its exit test, breaks a repository rule, or would misbehave. You did not write this code and you must not assume it works. Verify claims by reading the repository, by running the suite when the change touches C++, and by compiling a Python tool with `python -m py_compile` when the change touches one. """ + FOREGROUND + """ Do not comment on style; the lint owns that.
+INSTRUCTIONS = """You are reviewing one pull request in the <repository> repository. Your job is to refute it: find every way the change fails its exit test, breaks a repository rule, or would misbehave. You did not write this code and you must not assume it works. Verify claims by reading the repository, by reading CI's suite result below when the change touches C++, and by compiling a Python tool with `python -m py_compile` when the change touches one. """ + SUITE_RULE + " " + FOREGROUND + """ Do not comment on style; the lint owns that.
 
 Check, in this order:
 1. Correctness against the exit test and bullets below. Does the change do what the step claims, completely?
@@ -213,8 +247,9 @@ Check, in this order:
 
 """ + BLOCKING_RULE + "\n\n" + OUTPUT_FORMAT
 
-# Read-and-verify only. The reviewer may inspect history, build and run the
-# suite, and run the tools scripts; it may not merge, close, commit or edit.
+# Read-and-verify only. The reviewer may inspect history, build, run the suite
+# filtered to named test files, and run the tools scripts; it may not merge,
+# close, commit or edit.
 # This is the base list; allowed_tools() joins the repository's additions from the data file.
 BASE_TOOLS = [
         "Read",
@@ -389,12 +424,13 @@ def stone_plan(base_ref):
     return rows[0]["body"] if rows and rows[0].get("body") else None
 
 
-def build_prompt(pr, diff, stone, context_files, root, fix_check=None, turns=FULL_TURNS):
+def build_prompt(pr, diff, stone, context_files, root, fix_check=None, turns=FULL_TURNS, ci=None):
     """root is the worktree at the pull request head, so the exit test and the invariants are the reviewed text.
 
     fix_check is None for a full review. For a fix check it is (earlier round, reviewed commit, earlier
     findings, commits), and diff holds only the commits since the reviewed one, without the clean merges
-    of the base; commits names the ranges the diff covers.
+    of the base; commits names the ranges the diff covers. ci is CI's suite result for the head, as
+    ci_result returns it, or None when CI has not posted it; the section sits after the invariants.
     """
     parts = [instructions(fix_check), turn_budget(turns)]
     body = pr.get("body") or "(no body)"
@@ -425,6 +461,7 @@ def build_prompt(pr, diff, stone, context_files, root, fix_check=None, turns=FUL
     if plan:
         parts.append("# The stone's approved plan (the body of the stone's pull request to main)\n\n" + plan)
     parts.append(f"# Repository invariants ({DATA['review']['invariants']['file']})\n\n" + invariants(root))
+    parts.append(CI_SECTION.format(head7=pr["headRefOid"][:7]) + "\n\n" + (ci if ci is not None else CI_ABSENT))
     if fix_check:
         number, commit, findings, commits = fix_check
         parts.append(f"# The earlier review (round {number}, commit {commit[:7]})\n\n{findings}")
@@ -753,8 +790,8 @@ def blocking_count(review):
     return max(1, len(bullets))
 
 
-def find_review_comment(pr_number):
-    """This tool's comment on the pull request as (id, body), or None when there is none.
+def list_comments(pr_number):
+    """Every comment on the pull request, as one flat list of comment objects.
 
     A failed listing exits 2: treating it as "no comment" would restart the rounds at 1
     and post a second comment.
@@ -770,13 +807,60 @@ def find_review_comment(pr_number):
     except json.JSONDecodeError:
         sys.stderr.write(f"[review_pr] the comment listing for #{pr_number} is not JSON\n")
         sys.exit(2)
+    return [comment for page in pages for comment in page]
+
+
+def find_review_comment(comments):
+    """This tool's comment among the pull request's comments as (id, body), or None when there is none."""
     found = None
-    for page in pages:
-        for comment in page:
-            body = comment.get("body") or ""
-            if body.startswith(MARKER):  # a reply that quotes the review starts with ">"
-                found = (comment["id"], body)
+    for comment in comments:
+        body = comment.get("body") or ""
+        if body.startswith(MARKER):  # a reply that quotes the review starts with ">"
+            found = (comment["id"], body)
     return found
+
+
+def ci_result(comments, head):
+    """The body of CI's `mw-tests` comment for head, without its marker line, or None.
+
+    None when no comment starts with the marker, when the comment names another commit (CI edits one
+    comment in place, so it names the head only once its run on the head has ended), or when it has no
+    Commit line. A review or a reply that quotes the marker does not start with it.
+    """
+    for comment in comments:
+        body = comment.get("body") or ""
+        if not body.startswith(TESTS_MARK):
+            continue
+        found = TESTS_LINE.search(body)
+        if found and head.startswith(found.group(1)):
+            return body.partition("\n")[2].strip()
+    return None
+
+
+def wait_for_ci(pr_number, head, limit):
+    """CI's suite result for head, listing the comments every CI_POLL_SECONDS until limit seconds pass; None then.
+
+    limit 0 lists once. The reviewer starts either way: the merge tool waits for CI before any merge.
+    """
+    start, said = now(), False
+    while True:
+        result = ci_result(list_comments(pr_number), head)
+        if result is not None:
+            print(f"[review_pr] CI's suite result on {head[:7]}: run {TESTS_LINE.search(result).group(2)}")
+            return result
+        if now() - start >= limit:
+            print(f"[review_pr] CI has not posted its suite result on {head[:7]} after {limit} s; "
+                  "the reviewer starts without it")
+            return None
+        if not said:
+            print(f"[review_pr] waiting for CI's suite result on {head[:7]}, up to {limit} s")
+            said = True
+        sleep(CI_POLL_SECONDS)
+
+
+def ci_limit(args):
+    """The seconds the tool waits for CI's result: none under --no-wait-ci."""
+    return 0 if args.no_wait_ci else CI_WAIT_SECONDS
 
 
 def post_comment(pr_number, body, existing_id):
@@ -818,6 +902,8 @@ def arg_parser():
     ap.add_argument("--model", help="override the model the kind of change picks")
     ap.add_argument("--effort", help="override the effort the kind of change picks")
     ap.add_argument("--max-turns", type=int, help=f"default {FULL_TURNS} for a full review, {FIX_CHECK_TURNS} for a fix check")
+    ap.add_argument("--no-wait-ci", action="store_true",
+                    help=f"list the comments for CI's suite result once instead of waiting up to {CI_WAIT_SECONDS} s")
     return ap
 
 
@@ -878,7 +964,7 @@ def main():
         print(f"[review_pr] #{args.pr}: no review: the step touches no costly path "
               f"(documents/process/model-choice.md); merge once CI is green on {head[:7]}")
         return 0
-    found = find_review_comment(args.pr)
+    found = find_review_comment(list_comments(args.pr))
     earlier = parse_marks(found[1]) if found else None
     refusal = one_round_note(kind, earlier, args.extra_round)
     if refusal:
@@ -933,6 +1019,7 @@ def main():
     print(f"[review_pr] #{args.pr} round {number}, {mode}, {kind} review, model {profile[1]}, effort {profile[2]}, {turns} turns")
     if note:
         print(f"[review_pr] note: {note}")
+    ci = wait_for_ci(args.pr, head, ci_limit(args))
 
     worktree = Path(tempfile.mkdtemp(prefix="mw_review_"))
     added = run(["git", "worktree", "add", "--detach", str(worktree), pr["headRefOid"]], cwd=ROOT)
@@ -940,7 +1027,7 @@ def main():
         sys.stderr.write(added.stderr)
         return 2
     try:
-        prompt = build_prompt(pr, diff_text, args.stone, args.context, worktree, fix_check, turns)
+        prompt = build_prompt(pr, diff_text, args.stone, args.context, worktree, fix_check, turns, ci)
         earlier_code = earlier[2] if earlier else None
         review_round = (number, mode, note, profile, turns, commits, found[0] if found else None, earlier_code, extra)
         return review_in(worktree, prompt, pr, args, review_round)
@@ -954,8 +1041,9 @@ def main():
 
 
 def reviewer_call(profile, turns):
-    """The reviewer's command and environment. From the plugin, the reviewer loads this copy of the plugin in place
-    and waits for its plugins to install before its first turn; from the engine, neither."""
+    """The reviewer's command and environment. The environment carries MW_REVIEWER=1 in both copies. From the plugin,
+    the reviewer loads this copy of the plugin in place and waits for its plugins to install before its first turn;
+    from the engine, neither."""
     cmd = [
         "claude",
         "-p",
@@ -976,6 +1064,7 @@ def reviewer_call(profile, turns):
     ]
     env = dict(os.environ)
     env.pop("CLAUDECODE", None)  # permit a nested session when run from inside Claude Code
+    env[REVIEWER_ENV] = "1"  # both copies: the suite wrapper refuses an unfiltered run under it (the engine's issue 686)
     if FROM_PLUGIN:
         cmd += ["--plugin-dir", str(HOME)]
         env["CLAUDE_CODE_SYNC_PLUGIN_INSTALL"] = "1"
