@@ -50,6 +50,12 @@ def check(name, got, want):
         failures.append(f"{name}: got {got!r}, want {want!r}")
 
 
+def in_order(text, *parts):
+    """True when text holds every part, each after the one before."""
+    places = [text.find(part) for part in parts]
+    return all(place >= 0 for place in places) and places == sorted(places)
+
+
 # vendored_summary: upstream files under third_party/<library>/ become counts; glue directly
 # in third_party/ is not counted, because it is diffed like any other file.
 status = "A\tthird_party/SDL3/src/a.c\nA\tthird_party/SDL3/include/b.h\nM\tthird_party/sokol/sokol_gfx.h\nD\tthird_party/sokol/sokol_glue.h\nM\tthird_party/CMakeLists.txt\nM\tsrc/x.cpp\nR100\tthird_party/stb/old.h\tthird_party/stb/new.h\n"
@@ -166,6 +172,8 @@ check("grants: the base list holds no engine command", any("run_tests" in g or "
 # The reviewer's command: the engine's copy runs it as before; the plugin's copy loads itself and installs first.
 check("plugin: the flag is on in the plugin's copy", rp.FROM_PLUGIN, True)
 saved_sync = os.environ.pop("CLAUDE_CODE_SYNC_PLUGIN_INSTALL", None)
+# The caller's environment lacks the reviewer's mark, so a mark in the reviewer's environment is the tool's own.
+saved_reviewer = os.environ.pop("MW_REVIEWER", None)
 try:
     rp.FROM_PLUGIN = False
     engine_cmd, engine_env = rp.reviewer_call(STEP, 60)
@@ -175,6 +183,12 @@ finally:
     rp.FROM_PLUGIN = True
     if saved_sync is not None:
         os.environ["CLAUDE_CODE_SYNC_PLUGIN_INSTALL"] = saved_sync
+    if saved_reviewer is not None:
+        os.environ["MW_REVIEWER"] = saved_reviewer
+check("the reviewer's mark is the name the suite wrapper reads", rp.REVIEWER_ENV, "MW_REVIEWER")
+check("engine: the reviewer runs with MW_REVIEWER=1", engine_env.get("MW_REVIEWER"), "1")
+check("plugin: the reviewer runs with MW_REVIEWER=1", plugin_env.get("MW_REVIEWER"), "1")
+check("the caller's own environment keeps no reviewer mark", "MW_REVIEWER" in os.environ, saved_reviewer is not None)
 check("engine: the reviewer's command is unchanged", engine_cmd, [
     "claude", "-p", "--output-format", "text", "--max-turns", "60", "--model", "claude-opus-5-5", "--effort", "high",
     "--allowedTools", rp.allowed_tools(), "--disallowedTools", "PowerShell"])
@@ -196,6 +210,98 @@ finally:
 check("review_in: a failed reviewer exits 2", stubbed, 2)
 check("review_in: the plugin's copy passes --plugin-dir and the wait",
       (ran[0][0][-2:], ran[0][1].get("CLAUDE_CODE_SYNC_PLUGIN_INSTALL")), (["--plugin-dir", str(rp.HOME)], "1"))
+check("review_in: the reviewer it starts runs with MW_REVIEWER=1", ran[0][1].get("MW_REVIEWER"), "1")
+
+# CI's suite result (the engine's issue 686). The comment's form is the one the engine's workflow writes: the
+# marker line, the summary, then the line naming the commit's eight characters and the run.
+CI_SUMMARY = "```\n[run_tests] 812 passed, 0 failed\n```"
+CI_BODY = f"<!-- mw-tests -->\n{CI_SUMMARY}\nCommit {HEAD[:8]}, [run 4242](https://github.com/o/r/actions/runs/4242)."
+REVIEW_QUOTING = {"id": 1, "body": f"<!-- mw-review -->\n## Blocking\n- none\n\nQuoted:\n<!-- mw-tests -->\nCommit {HEAD[:8]}, [run 1](u)."}
+REPLY_QUOTING = {"id": 2, "body": f"> <!-- mw-tests -->\n> Commit {HEAD[:8]}, [run 2](u)."}
+CI_COMMENT = {"id": 3, "body": CI_BODY}
+CI_OLDER = {"id": 3, "body": f"<!-- mw-tests -->\n{CI_SUMMARY}\nCommit {OLD[:8]}, [run 4241](u)."}
+CI_NO_LINE = {"id": 3, "body": f"<!-- mw-tests -->\n{CI_SUMMARY}\nno commit named"}
+check("ci: the marker and the line are merge_step.py's", (rp.TESTS_MARK, rp.TESTS_LINE.pattern),
+      ("<!-- mw-tests -->", r"^Commit ([0-9a-f]{8}), \[run (\d+)\]"))
+check("ci: the head's comment is read past a review and a reply that quote the marker",
+      rp.ci_result([REVIEW_QUOTING, REPLY_QUOTING, CI_COMMENT], HEAD),
+      f"{CI_SUMMARY}\nCommit {HEAD[:8]}, [run 4242](https://github.com/o/r/actions/runs/4242).")
+check("ci: the body drops the marker line", "<!-- mw-tests -->" in rp.ci_result([CI_COMMENT], HEAD), False)
+check("ci: a comment on an older commit is not the head's", rp.ci_result([REVIEW_QUOTING, REPLY_QUOTING, CI_OLDER], HEAD), None)
+check("ci: a comment with no Commit line is not a result", rp.ci_result([CI_NO_LINE], HEAD), None)
+check("ci: no comments, no result", rp.ci_result([], HEAD), None)
+check("ci: a comment with no body is skipped", rp.ci_result([{"id": 4, "body": None}, CI_COMMENT], HEAD) is not None, True)
+
+
+def waited(listings, limit):
+    """(result, listings run, pauses, printed lines) of wait_for_ci over scripted listings; a pause moves the clock."""
+    clock, pauses, runs = [1000.0], [], []
+    saved = (rp.list_comments, rp.sleep, rp.now)
+
+    def listing(number):
+        runs.append(number)
+        return listings[min(len(runs), len(listings)) - 1]  # the last listing repeats
+
+    def pause(seconds):
+        pauses.append(seconds)
+        clock[0] += seconds
+    rp.list_comments, rp.sleep, rp.now = listing, pause, lambda: clock[0]
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            result = rp.wait_for_ci(83, HEAD, limit)
+    finally:
+        rp.list_comments, rp.sleep, rp.now = saved
+    return result, len(runs), pauses, out.getvalue().splitlines()
+
+
+result, listed, pauses, said = waited([[REVIEW_QUOTING, CI_COMMENT]], 600)
+check("wait: a result there at once returns with no pause", (result is not None, listed, pauses), (True, 1, []))
+check("wait: it prints the run it read", said, ["[review_pr] CI's suite result on bbbbbbb: run 4242"])
+result, listed, pauses, said = waited([[REVIEW_QUOTING], [CI_OLDER], [CI_OLDER, CI_COMMENT]], 600)
+check("wait: a result on the third listing comes after two pauses",
+      (result is not None, listed, pauses), (True, 3, [rp.CI_POLL_SECONDS, rp.CI_POLL_SECONDS]))
+check("wait: it says once that it waits, then names the run", said,
+      ["[review_pr] waiting for CI's suite result on bbbbbbb, up to 600 s", "[review_pr] CI's suite result on bbbbbbb: run 4242"])
+result, listed, pauses, said = waited([[CI_OLDER]], 60)
+check("wait: no result after the limit returns None", (result, listed, len(pauses)), (None, 4, 3))
+check("wait: it gives up with a line", said[-1],
+      "[review_pr] CI has not posted its suite result on bbbbbbb after 60 s; the reviewer starts without it")
+check("wait: the waiting line prints once", sum("waiting for CI" in line for line in said), 1)
+result, listed, pauses, said = waited([[CI_OLDER], [CI_COMMENT]], 0)
+check("wait: limit 0 lists once with no pause", (result, listed, pauses), (None, 1, []))
+check("wait: limit 0 never says it waits", any("waiting for CI" in line for line in said), False)
+check("wait: the default limit is the merge tool's queued limit", (rp.CI_WAIT_SECONDS, rp.CI_POLL_SECONDS), (600, 20))
+check("--no-wait-ci parses", rp.arg_parser().parse_args(["83", "--no-wait-ci"]).no_wait_ci, True)
+check("no --no-wait-ci by default", rp.arg_parser().parse_args(["83"]).no_wait_ci, False)
+check("the limit under --no-wait-ci is 0", rp.ci_limit(rp.arg_parser().parse_args(["83", "--no-wait-ci"])), 0)
+check("the limit without it is ten minutes", rp.ci_limit(rp.arg_parser().parse_args(["83"])), 600)
+
+# list_comments flattens the pages --slurp returns; a failed listing or a reply that is not JSON exits 2.
+# find_review_comment reads that list: the review starts with its marker, and a reply quoting it does not.
+
+
+def listing_of(code, stdout):
+    """list_comments over one stubbed gh reply, or the exit code it stops with."""
+    saved_list = rp.run
+    rp.run = lambda cmd, **kw: rp.subprocess.CompletedProcess(cmd, code, stdout, "gh failed")
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            return rp.list_comments(83)
+    except SystemExit as stop:
+        return ("exit", stop.code)
+    finally:
+        rp.run = saved_list
+
+
+check("list: the pages flatten in order", [c["id"] for c in listing_of(0, json.dumps([[{"id": 1}, {"id": 2}], [{"id": 3}]]))], [1, 2, 3])
+check("list: a failed listing exits 2", listing_of(1, ""), ("exit", 2))
+check("list: a reply that is not JSON exits 2", listing_of(0, "<html>"), ("exit", 2))
+REVIEW_REPLY = {"id": 5, "body": "> <!-- mw-review -->\n> quoted"}
+check("find: the review is found among other comments",
+      rp.find_review_comment([CI_COMMENT, REVIEW_REPLY, REVIEW_QUOTING]), (1, REVIEW_QUOTING["body"]))
+check("find: a reply quoting the review is not it", rp.find_review_comment([CI_COMMENT, REVIEW_REPLY]), None)
+check("find: no comments, none", rp.find_review_comment([]), None)
 
 # skips_review: a step outside the costly paths merges on green CI; --force-review asks for a round.
 check("skip: a step without the flag", rp.skips_review("step", False), True)
@@ -382,6 +488,21 @@ check("exit after an extra round", rp.exit_code(1, 3), 3)
 # Both prompts carry the blocking rule; the budget line and the heading check.
 check("fix check has the blocking rule", rp.BLOCKING_RULE in rp.FIX_CHECK_INSTRUCTIONS, True)
 check("full review has the blocking rule", rp.BLOCKING_RULE in rp.INSTRUCTIONS, True)
+# The suite rule (the engine's issue 686): both prompts forbid a full run, allow a filtered one, and read CI's result.
+for name, text in (("full review", rp.instructions(None)), ("fix check", rp.instructions((1, "a", "- x", "a..b")))):
+    check(f"{name}: carries the suite rule before the foreground rule",
+          in_order(text, rp.SUITE_RULE, rp.FOREGROUND), True)
+    check(f"{name}: no longer asks for a suite run on C++", "running the suite when the change touches C++" in text, False)
+    check(f"{name}: reads CI's suite result below", "CI's suite result below" in text, True)
+check("the suite rule forbids a full run", rp.SUITE_RULE.startswith("Never start a full suite run:"), True)
+check("the suite rule allows a run filtered to the finding's test files",
+      "run the suite filtered to the test files the finding names" in rp.SUITE_RULE, True)
+check("the suite rule says what to do when CI has not posted",
+      "read the pull request's comments once more with `gh pr view`" in rp.SUITE_RULE, True)
+check("the full review reads CI's result on C++",
+      "by reading CI's suite result below when the change touches C++" in rp.INSTRUCTIONS, True)
+check("the fix check reads the head and CI's result",
+      "read the repository at the pull request head and CI's suite result below" in rp.FIX_CHECK_INSTRUCTIONS, True)
 # Stone 1 step 8: the invariant test checks emoji and the instruction files' paths, so the prompt leaves them.
 check("the prompt leaves emoji to the invariant test", "an emoji" in rp.INSTRUCTIONS, False)
 check("the prompt names the files whose paths the test checks",
@@ -467,6 +588,24 @@ with tempfile.TemporaryDirectory() as scratch:
         check("prompt: a full review forbids background tasks", rp.FOREGROUND in prompt, True)
         check("prompt: a fix check forbids background tasks",
               rp.FOREGROUND in rp.build_prompt(PROMPT_PR, "d", None, [], worktree, (1, "abc", "- x", "a..b")), True)
+        # CI's section sits after the invariants and before the diff; without a result it says CI has not posted.
+        ci_body = rp.ci_result([CI_COMMENT], HEAD)
+        with_ci = rp.build_prompt(PROMPT_PR, "the diff", None, [], worktree, None, 60, ci_body)
+        check("prompt: CI's section names the head's seven characters and carries the body",
+              "# CI's suite result on bbbbbbb\n\n" + ci_body in with_ci, True)
+        check("prompt: CI's section sits after the invariants and before the diff",
+              in_order(with_ci, "# Repository invariants", "# CI's suite result", "# Diff"), True)
+        check("prompt: a result leaves out the not-posted sentence", rp.CI_ABSENT in with_ci, False)
+        without_ci = rp.build_prompt(PROMPT_PR, "the diff", None, [], worktree)
+        check("prompt: no result says CI has not posted, under the same heading",
+              "# CI's suite result on bbbbbbb\n\n" + rp.CI_ABSENT in without_ci, True)
+        check("prompt: the not-posted sentence names the merge tool's wait", rp.CI_ABSENT,
+              "CI has not posted its suite result for this commit yet; the merge tool waits for it before any merge.")
+        check("prompt: no result carries no run", "[run 4242]" in without_ci, False)
+        fix_ci = rp.build_prompt(PROMPT_PR, "d", None, [], worktree, (1, "abc", "- x", "a..b"), 30, ci_body)
+        check("prompt: a fix check carries CI's section before the earlier review and the diff",
+              in_order(fix_ci, "# CI's suite result on bbbbbbb", "# The earlier review", "# Diff since"), True)
+        check("prompt: both prompts carry the suite rule", rp.SUITE_RULE in with_ci and rp.SUITE_RULE in fix_ci, True)
         check("context: a file found nowhere exits 2", exits_2(PROMPT_PR, "d", None, ["no_such.md"], worktree), True)
         check("context: a missing stone section exits 2", exits_2(PROMPT_PR, "d", 9, [], worktree), True)
         (worktree / "documents" / "plans" / "phase-1-target.md").unlink()

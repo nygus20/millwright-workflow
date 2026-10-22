@@ -1,6 +1,6 @@
 {
   "name": "mw",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "The Millwright way of working: the stone and step skills, the guard, scratch, kill-by-name, emoji and session-start hooks, the output style, and the review and merge tools, configured per repository by .claude/mw.json.",
   "author": {
     "name": "nygus20"
