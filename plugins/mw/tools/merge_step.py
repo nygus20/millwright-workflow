@@ -32,9 +32,12 @@ One command does a step's merge mechanics (the owner's ruling of 2026-10-13). In
    summary was written. GitHub posts it as the run ends, where the job step list lagged up to
    25 minutes in Stone 12, so the step list decides only a run the comment does not name. A gh
    error or an empty step list reads as unknown and polls with backoff up to the overall
-   limit, never as "no run built". It stops on a red run, on a run queued past ten minutes
-   (documents/process/ci-runner.md, "When a run stays queued"), on no run after three
-   minutes, and on green runs that all show no summary.
+   limit, never as "no run built". A run GitHub lists as queued, waiting, pending or requested
+   is pending. When the head has no run, the tool reads the head's check runs before it rules
+   that none exists, and a check run not yet completed is pending too. It stops on a red run,
+   on a run or check run queued past ten minutes (documents/process/ci-runner.md, "When a run
+   stays queued"), on no run and no pending check run after the same ten minutes, and on green
+   runs that all show no summary.
 5. It merges with a merge commit, only at the head CI passed (`--match-head-commit`).
 6. It posts the brief on the stone's pull request and prints it. It never squashes, deletes
    a branch or force-pushes, so a step stacked on the merged one keeps its base.
@@ -68,8 +71,10 @@ TESTS_MARK = "<!-- mw-tests -->"
 TESTS_LINE = re.compile(r"^Commit ([0-9a-f]{8}), \[run (\d+)\]", re.M)
 POLL_SECONDS = 20
 MAX_POLL_SECONDS = 160  # the backoff's ceiling while GitHub's reply is unknown
-NO_RUN_SECONDS = 180  # GitHub lists a pull request's run within seconds of the push
-QUEUED_SECONDS = 600  # documents/process/ci-runner.md: a run queued past ten minutes gets the runner check
+# documents/process/ci-runner.md: a run queued past ten minutes gets the runner check. The wait for a first run
+# takes the same limit: on 2026-10-22 a 180-second wait ruled "no run" while a run sat queued.
+QUEUED_SECONDS = 600
+QUEUED = ("queued", "waiting", "pending", "requested")
 WAIT_SECONDS = 3600  # twice the build job's 30-minute limit, so a queued start still fits
 # Every worktree of a repository shares one .git, so two fetches, or a fetch and a push, race on one ref file.
 REF_LOCK = re.compile(r"cannot lock ref|Unable to create .*\.lock|unable to update local ref", re.IGNORECASE)
@@ -196,7 +201,7 @@ def ci_verdict(runs):
 
 def queued_too_long(runs, at):
     """The ids of the runs still queued QUEUED_SECONDS after GitHub created them."""
-    return [r["databaseId"] for r in runs if r["status"] in ("queued", "waiting", "pending", "requested")
+    return [r["databaseId"] for r in runs if r["status"] in QUEUED and r.get("createdAt")
             and at - datetime.fromisoformat(r["createdAt"].replace("Z", "+00:00")).timestamp() > QUEUED_SECONDS]
 
 
@@ -219,12 +224,31 @@ def commented_run(comments, head):
     return None
 
 
+def pending_checks(head):
+    """The head's check runs not yet completed, shaped as runs with "check" set; None when gh fails.
+
+    An empty run list beside such a check run means the run exists and GitHub does not list it yet."""
+    reply = gh_try(["api", f"repos/{{owner}}/{{repo}}/commits/{head}/check-runs?per_page=100"])
+    if not isinstance(reply, dict) or not isinstance(reply.get("check_runs"), list):
+        return None
+    return [{"databaseId": c.get("id"), "status": c.get("status"), "conclusion": c.get("conclusion") or "",
+             "createdAt": c.get("started_at"), "check": True}
+            for c in reply["check_runs"] if c.get("status") != "completed"]
+
+
 def ci_state(pr, head):
-    """(verdict, run ids, runs) for the runs whose head SHA is the head; "unknown" when gh fails."""
+    """(verdict, run ids, runs) for the runs whose head SHA is the head; "unknown" when gh fails.
+
+    With no run on the head, a pending check run gives "pending" with the check runs as the runs."""
     runs = gh_try(["run", "list", "--commit", head, "--json", "databaseId,headSha,status,conclusion,createdAt"])
     if not isinstance(runs, list):
         return "unknown", [], []
     runs = [r for r in runs if r.get("headSha") == head]
+    if not runs:
+        checks = pending_checks(head)
+        if checks is None:
+            return "unknown", [], []
+        return ("pending", [c["databaseId"] for c in checks], checks) if checks else ("none", [], [])
     green = sorted((r for r in runs if r["status"] == "completed" and r["conclusion"] in GREEN),
                    key=lambda r: -r["databaseId"])
     if green:
@@ -288,10 +312,12 @@ def wait_for_ci(pr, head):
             raise Stop(2, f"no run on {head[:8]} built or said that no code path changed; push a commit to start one")
         late = queued_too_long(runs, now())
         if late:
-            raise Stop(2, f"run {', '.join(map(str, late))} queued over ten minutes; check the runner "
+            kind = "check run" if runs[0].get("check") else "run"
+            raise Stop(2, f"{kind} {', '.join(map(str, late))} queued over ten minutes; check the runner "
                           "(documents/process/ci-runner.md, \"When a run stays queued\")")
-        if verdict == "none" and now() - start > NO_RUN_SECONDS:
-            raise Stop(2, f"no run on {head[:8]} after {NO_RUN_SECONDS} seconds; push a commit to start one")
+        if verdict == "none" and now() - start > QUEUED_SECONDS:
+            raise Stop(2, f"no run or pending check run on {head[:8]} after {QUEUED_SECONDS // 60} minutes; "
+                          "push a commit to start one")
         if now() - start > WAIT_SECONDS:
             raise Stop(2, f"CI on {head[:8]} not done after {WAIT_SECONDS // 60} minutes")
         delay = min(delay * 2, MAX_POLL_SECONDS) if verdict == "unknown" else POLL_SECONDS
