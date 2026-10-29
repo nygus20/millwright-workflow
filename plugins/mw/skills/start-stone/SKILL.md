@@ -9,7 +9,7 @@ A stone starts with a fresh plan, every time, even when an earlier session plann
 
 ## Read, in this order
 
-1. The stone's entry in the active phase plan, which `ROADMAP.md` names (`documents/plans/phase-2-target.md` from phase 1's close, "Stones"): its workstream, what it builds on, what it unblocks, its bullets and its exit test.
+1. The stone's entry in the active phase plan's "Stones": its workstream, what it builds on, what it unblocks, its bullets and its exit test. `ROADMAP.md` names the active plan in the sentence "Its plan is `documents/plans/<file>`", and the path comes from that sentence.
 2. Its workstream's page in `documents/plans/workstreams.md`: what the workstream owns and guards, and the table of its stones.
 3. That workstream's closed stones: open each row's pull request to `main` and read the approved plan in the body and the closing summary in the last comment.
 4. `documents/decisions/founding-decisions.md` for every decision the stone touches.

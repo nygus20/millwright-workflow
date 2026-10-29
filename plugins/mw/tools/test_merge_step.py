@@ -138,14 +138,16 @@ class Fake:
 
     tree is the merge-tree outcome: "same" as the head's tree, "differs", or "conflict"; bases is how many
     merge bases `git merge-base --all` names for the head and the stone branch, or ERROR when the call fails; locked
-    maps the start of a git command to how many of its runs fail on a ref lock before it succeeds."""
+    maps the start of a git command to how many of its runs fail on a ref lock before it succeeds; check_runs lists
+    the head's check-run replies in turn, the last repeating, each a list of check runs or ERROR."""
 
     def __init__(self, run_lists, base="stone/12-save", jobs=SUMMARY, deletes="false", below=True, moved=False,
-                 tree="same", comments=(), bases=1, locked=None):
+                 tree="same", comments=(), bases=1, locked=None, check_runs=((),)):
         self.calls, self.clock, self.merged, self.sleeps = [], created + 60, False, []
         self.run_lists, self.base, self.deletes, self.below, self.moved = run_lists, base, deletes, below, moved
         self.jobs = jobs if isinstance(jobs, tuple) else (jobs,)
         self.tree, self.comments, self.bases, self.locked = tree, list(comments), bases, dict(locked or {})
+        self.check_runs = list(check_runs)
 
     def __call__(self, cmd, cwd=None):
         self.calls.append(cmd)
@@ -162,6 +164,9 @@ class Fake:
         return "b" * 40 if any(c[:2] == ["git", "commit-tree"] for c in self.calls) else "a" * 40
 
     def answer(self, line):
+        if line.startswith("gh api") and "/check-runs" in line:
+            listed = self.check_runs.pop(0) if len(self.check_runs) > 1 else self.check_runs[0]
+            return (1, "HTTP 502") if listed == ERROR else {"total_count": len(listed), "check_runs": list(listed)}
         if line.startswith("gh api"):
             return self.deletes
         if line.startswith("gh pr view") and "isDraft" in line:
@@ -229,7 +234,38 @@ code, merges, said = scenario(Fake([runs((1, "completed", "success"), (2, "compl
 check("red: exit, no merge, the run named", (code, merges, "run 2" in said), (1, [], True))
 check("size only: no merge", scenario(Fake([GREEN], jobs=SIZE_ONLY))[:2], (2, []))
 check("queued: no merge", scenario(Fake([runs((1, "queued", ""))]))[:2], (2, []))
-check("no run: no merge", scenario(Fake([[]]))[:2], (2, []))
+fake = Fake([runs((1, "queued", "")), runs((1, "in_progress", "")), GREEN])
+check("queued: a queued run is waited for, then merged", (scenario(fake)[:2], len(fake.sleeps)),
+      ((0, [["gh", "pr", "merge", "42", "--merge", "--match-head-commit", "a" * 40]]), 2))
+fake = Fake([[]])
+code, merges, said = scenario(fake)
+check("no run: no merge after the ten-minute wait, the check runs read, the wait named",
+      (code, merges, ms.QUEUED_SECONDS < sum(fake.sleeps) <= ms.QUEUED_SECONDS + ms.POLL_SECONDS,
+       any("/check-runs" in " ".join(c) for c in fake.calls), "after 10 minutes" in said), (2, [], True, True, True))
+
+
+def check_run(status, conclusion=None):
+    return {"id": 9, "name": "run-checks", "status": status, "conclusion": conclusion, "started_at": "2026-10-13T10:00:00Z"}
+
+
+ms.run = Fake([[]], check_runs=[[check_run("queued")]])
+check("check runs: an empty run list beside a queued check run is pending", ms.ci_state(42, "a" * 40)[:2], ("pending", [9]))
+ms.run = Fake([[]], check_runs=[[check_run("in_progress")]])
+check("check runs: an empty run list beside a running check run is pending", ms.ci_state(42, "a" * 40)[:2], ("pending", [9]))
+ms.run = Fake([[]], check_runs=[[check_run("completed", "success")]])
+check("check runs: only completed check runs leave none", ms.ci_state(42, "a" * 40)[:2], ("none", []))
+ms.run = Fake([[]], check_runs=[ERROR])
+check("check runs: a gh error is unknown, never none", ms.ci_state(42, "a" * 40)[:2], ("unknown", []))
+ms.run = Fake([runs((1, "queued", ""))], check_runs=[ERROR])
+check("check runs: a listed run is not checked again", (ms.ci_state(42, "a" * 40)[:2],
+      any("/check-runs" in " ".join(c) for c in ms.run.calls)), (("pending", [1]), False))
+fake = Fake([[], [], GREEN], check_runs=[[check_run("queued")], [check_run("in_progress")]])
+check("check runs: a queued check run is waited for, then the run merges", (scenario(fake)[:2], len(fake.sleeps)),
+      ((0, [["gh", "pr", "merge", "42", "--merge", "--match-head-commit", "a" * 40]]), 2))
+fake = Fake([[]], check_runs=[[check_run("queued")]])
+code, merges, said = scenario(fake)
+check("check runs: one queued past ten minutes stops for the runner, not as no run",
+      (code, merges, "check run 9 queued over ten minutes" in said, "no run" in said), (2, [], True, False))
 check("moved head: no merge", scenario(Fake([GREEN], moved=True))[:2], (2, []))
 check("deletes on merge: no merge", scenario(Fake([GREEN], deletes="true"))[:2], (2, []))
 fake = Fake([GREEN])

@@ -17,7 +17,7 @@ This plugin holds the way of working that the Millwright engine and the reposito
 | `mw_data.py` | Loads `.claude/mw.json`. It refuses a missing file, an unknown version and a missing required key, and it fills the review section's defaults. |
 | `output-styles/millwright.md` | Sets the reply style. Its `force-for-plugin: true` applies it whenever the plugin is enabled. |
 | `tools/review_pr.py` | Runs the adversarial review of a pull request in a fresh `claude -p` session, which loads this plugin through `--plugin-dir`, and reads CI's suite result for the reviewed commit in place of running the suite. |
-| `tools/merge_step.py` | Merges a step's pull request into its stone branch once CI is green, then posts the step's brief. |
+| `tools/merge_step.py` | Merges a step's pull request into its stone branch once CI is green, then posts the step's brief. From 0.1.10 on, it reads the head's check runs when GitHub lists no run, and it waits ten minutes for a first run. |
 | `tools/test_hooks.py`, `tools/test_review_pr.py`, `tools/test_merge_step.py` | Test the hooks, the review tool and the merge tool. Each takes the repository to check as its argument. |
 | `tools/run_checks.py` | Runs the three tests against one repository and prints one summary line per test. |
 | `tools/fixture/.claude/mw.json` | Gives the tests a fixed data file, the engine's lists at `v0.1.0`. |
@@ -33,7 +33,7 @@ This plugin holds the way of working that the Millwright engine and the reposito
 ```json
 {
   "extraKnownMarketplaces": {
-    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.9"}}
+    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.10"}}
   },
   "enabledPlugins": {"mw@millwright": true},
   "hooks": {
