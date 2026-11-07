@@ -11,9 +11,12 @@ records how it came from the engine's .claude/hooks/.
 load(root) returns the file's object with the review section's defaults filled
 in, or raises DataFileError naming what is wrong: a missing file, a file that is
 not JSON, an unknown version, a missing required key or a value of the wrong
-type. load_or_exit(root) is the form a hook or a tool calls: it prints the
-reason on stderr and exits 2, which stops a hook's tool call and hands the
-reason to the agent, and which a tool's caller reads as a refusal.
+type. The optional top-level stone_registry object names the file that records
+a repository's stones and the command that rewrites what is made from it; when
+present, it must hold a file string and a rewrite string. A repository without
+the key loads as before. load_or_exit(root) is the form a hook or a tool calls:
+it prints the reason on stderr and exits 2, which stops a hook's tool call and
+hands the reason to the agent, and which a tool's caller reads as a refusal.
 
 guard_lists(data) gives the guard hook's files, lower case because Windows
 paths ignore case, and folders. The data file itself always joins the files,
@@ -37,6 +40,8 @@ REVIEW_DEFAULTS = {
     "invariants": {"file": "CLAUDE.md", "heading": "Load-Bearing Invariants"},
     "path_sources": ["CLAUDE.md", "AGENTS.md", "documents/README.md", "the skills"],
     "findings_folder": "documents/findings/",
+    # The phase plan's stone headings, tried in order: the engine's form and the game's two (engine issue 876).
+    "stone_headings": ["^### Stone {id}\\b", "^### {id} — ", "^### The {id} stone$"],
 }
 
 
@@ -83,6 +88,10 @@ def load(root):
                                              isinstance(row.get("reason"), str) for row in rows):
         raise DataFileError(f"{DATA_FILE} key review.costly_paths must be a list of objects with a pattern and a "
                             "reason")
+    if "stone_registry" in data:  # optional: the game keeps one, the engine none (engine issue 877)
+        registry = _require(data, "stone_registry", dict, "")
+        _require(registry, "file", str, "stone_registry.")
+        _require(registry, "rewrite", str, "stone_registry.")
     for key, default in REVIEW_DEFAULTS.items():
         review.setdefault(key, json.loads(json.dumps(default)))  # a copy, so no caller edits the defaults
     return data
