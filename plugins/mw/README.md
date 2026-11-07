@@ -7,6 +7,7 @@ This plugin holds the way of working that the Millwright engine and the reposito
 | Path | What it does |
 |---|---|
 | `.claude-plugin/plugin.json` | Names the plugin `mw` and carries its version. |
+| `agents/step-builder.md` | Defines the agent `mw:step-builder`, which builds one step of a stone. Its frontmatter fixes the model `claude-opus-5-5` and the effort `high`, and its body holds the standing brief every step obeys. The `mw:coordinate-stone` skill starts it once per step and passes no `model` and no `effort`, because a value in the call overrides the definition's. |
 | `skills/` | Holds seven skills: `start-stone`, `coordinate-stone`, `close-stone`, `adversarial-review`, `changelog-entry`, `prior-art` and `port-triage`. A session invokes each as `/mw:<skill>`. Each skill names the plugin's tools through `${CLAUDE_PLUGIN_ROOT}`, which Claude Code replaces with the plugin's folder when the skill loads. |
 | `hooks/hooks.json` | Wires the five hooks. The three PreToolUse hooks carry `"onFailure": "block"`, so a hook that fails to run stops the tool call. |
 | `hooks/deny_guard_config.py` | Denies an edit to a file or folder that the data file's `guard` key lists, and to the data file itself. |
@@ -19,7 +20,8 @@ This plugin holds the way of working that the Millwright engine and the reposito
 | `tools/review_pr.py` | Runs the adversarial review of a pull request in a fresh `claude -p` session, which loads this plugin through `--plugin-dir`, and reads CI's suite result for the reviewed commit in place of running the suite. |
 | `tools/merge_step.py` | Merges a step's pull request into its stone branch once CI is green, then posts the step's brief. From 0.1.10 on, it reads the head's check runs when GitHub lists no run, and it waits ten minutes for a first run. |
 | `tools/test_hooks.py`, `tools/test_review_pr.py`, `tools/test_merge_step.py` | Test the hooks, the review tool and the merge tool. Each takes the repository to check as its argument. |
-| `tools/run_checks.py` | Runs the three tests against one repository and prints one summary line per test. |
+| `tools/test_agents.py` | Tests the step builder's definition: its fixed fields, no field Claude Code ignores, the standing items of its body, the coordinate-stone skill's call, and no skill or agent that names a repository's worktree folder. It accepts the repository as its argument and reads only the plugin's files. |
+| `tools/run_checks.py` | Runs the four tests against one repository and prints one summary line per test. |
 | `tools/fixture/.claude/mw.json` | Gives the tests a fixed data file, the engine's lists at `v0.1.0`. |
 | `templates/mw.json` | Gives a new repository its first data file. |
 | `templates/require_plugin.py` | Gives a new repository its repository-side hook, which denies an edit when the plugin is not loaded or, from 0.1.6 on, when the loaded version differs from the pinned tag. |
