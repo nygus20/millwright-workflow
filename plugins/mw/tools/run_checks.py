@@ -1,4 +1,4 @@
-"""Run the plugin's three tests against one repository and print one summary line per test.
+"""Run the plugin's four tests against one repository and print one summary line per test.
 
 Usage:
     python tools/run_checks.py [FOLDER]
@@ -10,8 +10,8 @@ templates/mw.json as its .claude/mw.json, which is what the marketplace's CI run
 
 It first loads the folder's .claude/mw.json through mw_data.py, and a data file
 the loader refuses prints the reason and exits 1 before any test runs. Then it
-runs tools/test_hooks.py, tools/test_review_pr.py and tools/test_merge_step.py
-with this interpreter, each with the folder as its argument, and prints each
+runs tools/test_hooks.py, tools/test_review_pr.py, tools/test_merge_step.py and
+tools/test_agents.py with this interpreter, each with the folder as its argument, and prints each
 test's FAIL lines, its skipped lines and its summary line,
 `[test_x] N checks, M failures`. A test that prints no summary line gets one
 naming its exit code. The last line is `[run_checks] N tests, M failed against
@@ -26,7 +26,7 @@ import tempfile
 from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parent.parent
-TESTS = ["test_hooks.py", "test_review_pr.py", "test_merge_step.py"]
+TESTS = ["test_hooks.py", "test_review_pr.py", "test_merge_step.py", "test_agents.py"]
 TIMEOUT_SECONDS = 600  # the hook test starts some two hundred processes; a slow Windows machine took about a minute
 
 sys.path.insert(0, str(PLUGIN))

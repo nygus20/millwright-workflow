@@ -1,7 +1,7 @@
 ---
 name: coordinate-stone
 description: Coordinate an open stone's steps in a fresh session, one subagent per step, after the mw:start-stone skill opened the stone; resume a stopped or oversized coordinator from the stone's pull request alone. Use when the owner runs /mw:coordinate-stone, with or without a stone number, after /clear, or says "coordinate Stone N" or "resume Stone N".
-argument-hint: "[stone number]"
+argument-hint: "[stone number or slug]"
 ---
 
 # Coordinate a stone
@@ -15,7 +15,7 @@ The session's first line names the model it runs on, as its system prompt states
 ## Find the stone
 
 1. List the open stones: `gh pr list --base main --state open --json number,title,headRefName,isDraft`, keeping each pull request whose head branch starts with `stone/`. Keep drafts and ready ones alike, because the `mw:close-stone` skill marks a stone's pull request ready before its review and fix rounds.
-2. Pick one. With a stone number given (`$ARGUMENTS`), take the pull request whose branch is `stone/<n>-<slug>`. With no number and one stone open, take it. With several open, as parallel stones allow, and no number, list each one's number, title and branch, ask the owner which, and stop.
+2. Pick one. With a stone number or a slug given (`$ARGUMENTS`), take the pull request whose branch is `stone/<n>-<slug>` or `stone/<slug>`, so a stone outside the phase numbering is found by its slug. With nothing given and one stone open, take it. With several open, as parallel stones allow, and nothing given, list each one's number, title and branch, ask the owner which, and stop.
 3. With no stone open, open it first. Take the newest file under `$HOME/.claude/plans/` whose first line names a stone, such as "# Plan: Stone 12, save with migration, profiles and settings"; that folder also holds plans of other kinds. When no file names a stone, or the newest names another stone than the number given, ask the owner which plan and stop. Then run items 1 and 2 of the `mw:start-stone` skill's "After approval" with that file as the body. A plan over GitHub's body limit of 65,536 characters keeps its prose in the body and moves its tables to a first comment that opens with `<!-- mw-plan-tables -->`, as Stone 12's pull request 306 did.
 
 ## Read the stone
@@ -26,7 +26,7 @@ The session's first line names the model it runs on, as its system prompt states
 
 ## Find the worktree
 
-Run `git worktree list` from the main checkout and take the line on the stone's branch. When none exists, recreate it: `git fetch origin`, then `git worktree add c:/projects/millwright-worktrees/<slug> stone/<n>-<slug>`, which checks out the remote branch. Work only in that folder from here on, never in the main checkout (AGENTS.md "Working Units and Sessions"). The same list shows each step worktree a stopped coordinator left: one whose step merged is removed, and one whose pull request is open stays for that step.
+Run `git worktree list` from the main checkout and take the line on the stone's branch. When none exists, recreate it: `git fetch origin`, then `git worktree add <worktrees>/<slug> <branch>`, which checks out the remote branch. `<worktrees>` is the folder the session's start line names, which the `worktrees` key of the repository's `.claude/mw.json` holds; the plugin names no repository's folder. Work only in that folder from here on, never in the main checkout (AGENTS.md "Working Units and Sessions"). The same list shows each step worktree a stopped coordinator left: one whose step merged is removed, and one whose pull request is open stays for that step.
 
 ## Where the stone stands
 
@@ -41,22 +41,20 @@ An open step pull request continues where its comments leave it: no review round
 
 ## Building the steps
 
-From Stone 11 on, one coordinating session holds the plan, runs the review tool and merges, and it starts one fresh subagent per step, on Opus at high, which builds the step and opens its pull request (ruled by the owner on 2026-10-13). The reason is measured: building sessions that drove a whole stone themselves re-read 460K to 620K tokens of context per turn, 966K at the peak, and those cache reads made 77 to 87 percent of their cost. A fresh subagent starts empty and reads only its own step. From Stone 12 on, the coordinator is itself a fresh session, started by this skill.
+From Stone 11 on, one coordinating session holds the plan, runs the review tool and merges, and it starts one fresh subagent per step, on Opus at high, which builds the step and opens its pull request (ruled by the owner on 2026-10-13). From 0.1.12 on, that subagent is the plugin's step builder, the agent `mw:step-builder`, whose definition fixes its model and effort and holds the standing brief every step obeys. The reason is measured: building sessions that drove a whole stone themselves re-read 460K to 620K tokens of context per turn, 966K at the peak, and those cache reads made 77 to 87 percent of their cost. A fresh subagent starts empty and reads only its own step. From Stone 12 on, the coordinator is itself a fresh session, started by this skill.
 
-The brief the coordinator writes carries:
-- the step's part of the plan, with the rows of the record or the tables it implements and the rulings it touches; its branch `step/<stone-slug>/<n>-<slug>`; the branch it is cut from; and the base its pull request opens against;
-- its own worktree, `git worktree add c:/projects/millwright-worktrees/<stone-slug>-<n> -b <branch> origin/<from>`, and the rule to work only there, never in the main checkout or the stone's worktree;
-- the three rules CLAUDE.md names for every delegation, and "read AGENTS.md and CLAUDE.md first";
-- the rule that a comment it writes in code cites a findings doc or a decision and never a plan, whose text moves (the invariant test's plan-citation rule);
-- the `run-tests` and `lint` skills before the push, then commit, push and open the pull request against its base, never as a draft, and stop there, because the coordinator merges;
-- each gotcha an earlier step learned, until the tracked doc that owns its rule holds it;
-- the rule that every temporary file the subagent writes to the shared scratchpad carries its step's number in its name, so the name is unique to the step, because Stone 17's step 9 overwrote step 3b2's body file there;
-- the rule that every refusal the pull request's body claims has a test that fails when the refusal breaks, and that a test of "unchanged" starts from a state that is not empty, because Stone 12's steps 5c and 5d each met a review finding where a test could not fail;
-- the report: at most about 200 words, naming the pull request's number, its changed lines, the test counts and each reversible choice, with the detail in the pull request's body (ruled by the owner on 2026-10-13).
+The coordinator starts the step builder once per step, through the Agent tool with `subagent_type` set to `mw:step-builder`, and passes no `model` and no `effort`. A value in the call overrides the definition's (Claude Code's sub-agents page, https://code.claude.com/docs/en/sub-agents, read 2026-11-07), and the call's `model` takes only an alias. The brief carries only what varies:
+- the step's part of the plan, with the rows of the record or the tables it implements and the rulings it touches;
+- its branch `step/<stone-slug>/<n>-<slug>`, the branch it is cut from, and the base its pull request opens against;
+- its worktree line, `git worktree add <worktrees>/<stone-slug>-<n> -b <branch> origin/<from>`, with `<worktrees>` written out as the session's start line names it;
+- the repository's suite and lint commands, when they differ from the `run-tests` and `lint` skills' names;
+- each gotcha an earlier step learned, until the tracked doc that owns its rule holds it.
 
-The coordinator keeps no report beyond the next decision; the pull request body and the brief keep the record. The stone's first step sets the stone's row on its workstream's page to "open" with the pull request link, adds the stone's entry to the phase plan when the stone has none, and reads every open issue with the `from-game` label into the phase plan's "Inbound" as a dated line that links the issue, skipping an issue a line already links. The shared records thus change inside a reviewed step (AGENTS.md "Working Units and Sessions"). Before a step that edits a hook, a workflow or a preset, the owner lifts the guard hook as item 4 of the `mw:start-stone` skill's "After approval" says.
+The definition holds the rest, so the brief does not repeat it: the rule files of the checkout the step edits, the worktree rule, the three rules CLAUDE.md names for every delegation, the comment that cites no plan, the tested refusal, the scratchpad name, the suite and lint before the push, the pull request against its base, and the report of about 200 words.
 
-**A subagent names its model.** A subagent inherits its parent's model, so one started from a Fable session runs on Fable unless the call names another. Every subagent this skill starts names its model: Opus for a step and for research, Haiku for a file search.
+The coordinator keeps no report beyond the next decision; the pull request body and the brief keep the record. The stone's first step sets the stone's row on its workstream's page to "open" with the pull request link, adds the stone's entry to the phase plan when the stone has none, and reads every open issue with the `from-game` label into the phase plan's "Inbound" as a dated line that links the issue, skipping an issue a line already links. In a repository whose `.claude/mw.json` holds a `stone_registry` key, the first step also adds the stone's entry, with its pull request, to the file the key's `file` names, and runs the key's `rewrite` command before the commit, because the repository's suite checks the rewritten output against that file. The shared records thus change inside a reviewed step (AGENTS.md "Working Units and Sessions"). Before a step that edits a hook, a workflow or a preset, the owner lifts the guard hook as item 4 of the `mw:start-stone` skill's "After approval" says.
+
+**A subagent names its model.** A subagent inherits its parent's model, so one started from a Fable session runs on Fable unless the call or its definition names another. The step builder's definition fixes its model and effort, so its call names neither. Every other subagent this skill starts names its model in the call: Opus for research, Haiku for a file search.
 
 **Steps run side by side.** Steps the plan marks independent start at once, each subagent in the background in its own worktree. The limit on open step pull requests and the rules for a stacked step are the `mw:adversarial-review` skill's, "In the background, stacked".
 
@@ -65,7 +63,7 @@ The coordinator keeps no report beyond the next decision; the pull request body 
 2. writes the step's brief (`documents/process/agent-rulings.md`, "The records") to a file in the scratchpad, then merges with `python "${CLAUDE_PLUGIN_ROOT}/tools/merge_step.py" <pr> --brief <file>` in the background, as that skill's exit 0 says; the tool retargets a stacked step first, stops on a conflict with the stone branch before any wait, and merges at once when the stone branch changes nothing and the head is already green;
 3. reads the tool's exit code: on 0 the brief is on the stone's pull request, and the coordinator gives the owner the same text;
 4. ticks the step's box in the body: `gh pr view <stone-pr> --json body --jq .body` into a file in the scratchpad, the tick made with the file tools, then `gh pr edit <stone-pr> --body-file <file>`;
-5. removes the step's worktree from the main checkout, `git worktree remove c:/projects/millwright-worktrees/<stone-slug>-<n>`, after retargeting every step stacked on it; the branch stays until the stone's close (`mw:adversarial-review` skill);
+5. removes the step's worktree from the main checkout, `git worktree remove <worktrees>/<stone-slug>-<n>`, after retargeting every step stacked on it; the branch stays until the stone's close (`mw:adversarial-review` skill);
 6. carries a gotcha the step learned into the next brief, or into the tracked doc that owns its rule.
 
 ## The context rule
