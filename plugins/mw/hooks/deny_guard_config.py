@@ -18,9 +18,9 @@ in, and the checkout the file itself sits in, found by walking up to the
 nearest `.git` entry, when that checkout is a worktree of the same repository.
 A session whose project directory is itself a worktree also guards the main
 checkout that worktree belongs to. The second root covers a stone's worktree under
-c:/projects/millwright-worktrees/, which a session started in the main
-checkout edits without changing its project directory (documents/known-issues.md,
-2026-10-09).
+the folder the worktrees key of the repository's .claude/mw.json names, which a
+session started in the main checkout edits without changing its project
+directory (documents/known-issues.md, 2026-10-09).
 
 To let an agent through after a discussion, the owner either sets
 MW_ALLOW_GUARD_EDIT=1 in the environment for that session, or puts
