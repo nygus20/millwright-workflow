@@ -1,7 +1,7 @@
 """Adversarial review of a pull request by a fresh Claude Code session.
 
 Usage:
-    python "${CLAUDE_PLUGIN_ROOT}/tools/review_pr.py" <pr-number> [--stone N] [--context FILE]... [--post]
+    python "${CLAUDE_PLUGIN_ROOT}/tools/review_pr.py" <pr-number> [--stone ID] [--context FILE]... [--post]
                                                       [--full] [--extra-round [agent|owner]] [--force-review]
                                                       [--model NAME] [--effort LEVEL] [--max-turns N] [--no-wait-ci]
 
@@ -70,10 +70,14 @@ the reviewer's, the roadmap and its plan sentence, the invariants' file and
 heading, the repository's name and the path sources the prompt names. A data
 file the loader refuses prints the reason and exits 2.
 
-Context. --stone N copies the "Stone N" section of the active phase plan into
+Context. --stone ID copies the stone's section of the active phase plan into
 the prompt as the exit test; the active plan is the one the data file's plan sentence first matches in
-the roadmap at the reviewed commit. For a step (a pull request into a stone branch,
-or into a step branch of that stone while the step below is open) the body of
+the roadmap at the reviewed commit. The section starts at the first heading that
+one of the data file's stone headings matches, tried in order with {id} standing
+for the escaped ID, and ends at the next ### or ## heading. The defaults match
+"### Stone 38", "### G21 — <title>" and "### The plan-board stone". For a step
+(a pull request into a stone branch, or into a step branch of that stone while
+the step below is open) the body of
 the stone's open pull request to main, which holds the approved plan, is
 appended through one `gh pr list` call. --context FILE appends a file verbatim, for a
 documents-only step whose exit test is a plan file. A relative path is read at
@@ -358,8 +362,11 @@ def phase_plan(root):
     return Path(match.group(1)) if match else None
 
 
-def stone_section(number, root):
-    """The stone's section of the phase plan at the reviewed commit, or None when the heading is missing."""
+def stone_section(stone_id, root):
+    """The stone's section of the phase plan at the reviewed commit, or None when no heading matches.
+
+    Each of the data file's stone headings is tried in order, with {id} replaced by the escaped id, so
+    "Stone 3" never matches "Stone 38" and an id's hyphen or dot matches only itself."""
     relative = phase_plan(root)
     if relative is None:
         sys.stderr.write(f"[review_pr] {DATA['review']['roadmap']} names no phase plan at the reviewed commit (no match for "
@@ -370,9 +377,12 @@ def stone_section(number, root):
         sys.stderr.write(f"[review_pr] {relative.as_posix()} is absent at the reviewed commit; refusing to review without an exit test\n")
         sys.exit(2)
     text = plan.read_text(encoding="utf-8")
-    pattern = re.compile(rf"^### Stone {number}\b.*?(?=^### |^## |\Z)", re.S | re.M)
-    match = pattern.search(text)
-    return match.group(0).strip() if match else None
+    for heading in DATA["review"]["stone_headings"]:
+        pattern = heading.replace("{id}", re.escape(str(stone_id)))
+        match = re.search(pattern + r".*?(?=^### |^## |\Z)", text, re.S | re.M)
+        if match:
+            return match.group(0).strip()
+    return None
 
 
 def strip_preamble(review):
@@ -438,7 +448,7 @@ def build_prompt(pr, diff, stone, context_files, root, fix_check=None, turns=FUL
     if stone is not None:
         section = stone_section(stone, root)
         if section is None:
-            sys.stderr.write(f"[review_pr] Stone {stone} has no section in {phase_plan(root).as_posix()}; refusing to review without an exit test\n")
+            sys.stderr.write(f"[review_pr] the stone {stone} has no section in {phase_plan(root).as_posix()}; refusing to review without an exit test\n")
             sys.exit(2)
         parts.append("# Exit test and bullets\n\n" + section)
     for path in context_files:
@@ -884,7 +894,7 @@ def post_comment(pr_number, body, existing_id):
 def arg_parser():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("pr", type=int)
-    ap.add_argument("--stone", type=int)
+    ap.add_argument("--stone", help="the stone's id: 38, G21 or plan-board")
     ap.add_argument("--context", action="append", default=[])
     ap.add_argument("--post", action="store_true")
     ap.add_argument("--full", action="store_true", help="review the whole diff even when a fix check would do")

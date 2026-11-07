@@ -618,6 +618,42 @@ with tempfile.TemporaryDirectory() as scratch:
     finally:
         os.chdir(previous)
 
+# stone_section: each default heading form finds its stone by id and ends at the next ### or ## heading; the
+# id is escaped and bounded, so "3" stops short of "Stone 38" and "plan.board" never matches "plan-board".
+with tempfile.TemporaryDirectory() as scratch:
+    worktree = Path(scratch)
+    (worktree / "documents" / "plans").mkdir(parents=True)
+    (worktree / "CLAUDE.md").write_text("## Load-Bearing Invariants\n1. a rule\n", encoding="utf-8")
+    (worktree / "ROADMAP.md").write_text("Its plan is `documents/plans/phase-3.md`.\n", encoding="utf-8")
+    (worktree / "documents" / "plans" / "phase-3.md").write_text(
+        "## Stones\n\n### Stone 38 — T\nthirty-eight's test\n\n### G21 — T\ng21's test\n\n### The plan-board stone\n"
+        "the board's test\n#### Steps\nstill the board\n## Inbound\nnot a stone\n", encoding="utf-8")
+    check("stones: Stone 38 by its number", rp.stone_section("38", worktree), "### Stone 38 — T\nthirty-eight's test")
+    check("stones: G21 by its id", rp.stone_section("G21", worktree), "### G21 — T\ng21's test")
+    check("stones: the plan-board stone by its id, through its #### heading up to the ## heading",
+          rp.stone_section("plan-board", worktree), "### The plan-board stone\nthe board's test\n#### Steps\nstill the board")
+    for unknown in ("3", "G2", "plan", "plan.board", "99"):
+        check(f"stones: {unknown} finds no section", rp.stone_section(unknown, worktree), None)
+    check("stones: --stone G21 parses as a string", parse(["83", "--stone", "G21"]).stone, "G21")
+    check("stones: --stone 38 parses as a string", parse(["83", "--stone", "38"]).stone, "38")
+    check("stones: the prompt carries the G21 section", "g21's test" in rp.build_prompt(PROMPT_PR, "d", "G21", [], worktree),
+          True)
+    refusal = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(refusal):
+            rp.build_prompt(PROMPT_PR, "d", "3", [], worktree)
+        stopped = None
+    except SystemExit as stop:
+        stopped = stop.code
+    check("stones: an unknown stone exits 2 naming the stone and the plan", (stopped, refusal.getvalue().startswith(
+        "[review_pr] the stone 3 has no section in documents/plans/phase-3.md;")), (2, True))
+    rp.DATA = json.loads(json.dumps(ENGINE_DATA))
+    rp.DATA["review"]["stone_headings"] = ["^### Unit {id}\\b"]
+    (worktree / "documents" / "plans" / "phase-3.md").write_text("### Unit 4\nunit four\n### G21 — T\nx\n", encoding="utf-8")
+    check("stones: the data file's headings replace the defaults",
+          (rp.stone_section("4", worktree), rp.stone_section("G21", worktree)), ("### Unit 4\nunit four", None))
+    rp.DATA = ENGINE_DATA
+
 # walk_since over a real repository in a temporary folder: a clean merge of the base is left out, an
 # unclean one (a conflict resolved by hand, an edit folded in) names itself, and a merge of a branch the
 # base does not carry is reviewed like any commit. The identity and signing settings are the test's own.

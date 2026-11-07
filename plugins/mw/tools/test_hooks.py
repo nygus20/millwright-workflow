@@ -437,6 +437,14 @@ with tempfile.TemporaryDirectory() as scratch:
     rowless = json.loads(json.dumps(DATA))
     rowless["review"]["costly_paths"] = [{"pattern": "src/"}]
     cases.append(("a costly path with no reason", rowless, "review.costly_paths must be a list of objects"))
+    registry = {"file": "documents/plans/stones.toml", "rewrite": "python tools/plan_board.py --write"}
+    cases.append(("a stone registry that is a string", {**DATA, "stone_registry": "stones.toml"},
+                  "key stone_registry must be a dict"))
+    for key in ("file", "rewrite"):
+        cases.append((f"no stone_registry.{key}", {**DATA, "stone_registry": {k: v for k, v in registry.items() if k != key}},
+                      f"required key stone_registry.{key}"))
+    cases.append(("a stone registry's rewrite that is a list", {**DATA, "stone_registry": {**registry, "rewrite": ["python"]}},
+                  "key stone_registry.rewrite must be a str"))
     for what, data, reason in cases:
         write_data(broken, data)
         check(f"data: {guard} refuses {what}", refuses(run_hook(guard, broken, broken / "CMakePresets.json"), reason), True)
@@ -459,6 +467,20 @@ with tempfile.TemporaryDirectory() as scratch:
     write_data(broken, minimal)
     check("data: the loader keeps a value the file sets", mw_data.load(broken)["review"]["findings_folder"],
           "notes/findings/")
+
+    # The optional stone registry: a file with it gives both strings and still gets the review defaults, and the
+    # fixture's file, which lacks it, loads with its own lists and no registry.
+    minimal["stone_registry"] = registry
+    write_data(broken, minimal)
+    loaded = mw_data.load(broken)
+    check("data: the stone registry loads with both strings", loaded["stone_registry"], registry)
+    check("data: a file with the stone registry still gets the review defaults", loaded["review"]["stone_headings"],
+          mw_data.REVIEW_DEFAULTS["stone_headings"])
+    write_data(broken, DATA)
+    loaded = mw_data.load(broken)
+    check("data: a file without the stone registry loads as before",
+          ("stone_registry" in loaded, loaded["guard"], loaded["scratch_patterns"], loaded["review"]["costly_paths"]),
+          (False, DATA["guard"], DATA["scratch_patterns"], DATA["review"]["costly_paths"]))
 
     # The kill hook: it denies a stop by name in either shell and passes a stop by PID and a listing alone.
     kill_hook = "deny_kill_by_name.py"
