@@ -15,12 +15,12 @@ This plugin holds the way of working that the Millwright engine and the reposito
 | `hooks/deny_kill_by_name.py` | Denies a `Bash` or `PowerShell` command that stops a process by its name, such as `taskkill /IM`, `Stop-Process -Name` or `pkill`, because a name matches every session's copy of the program. Its reason names the stop by PID. |
 | `hooks/no_emoji_md.py` | Reports an emoji written into a `.md` file, so the agent removes it. |
 | `hooks/session_start.py` | Sets `core.hooksPath` when the repository holds `git-hooks/`, writes the session's two markers, and prints one context line naming the plugin's version, its folder and the repository's worktree folder. |
-| `mw_data.py` | Loads `.claude/mw.json`. It refuses a missing file, an unknown version and a missing required key, and it fills the review section's defaults. |
+| `mw_data.py` | Loads `.claude/mw.json`. It refuses a missing file, an unknown version, a missing required key and an optional `stone_registry` key that lacks its `file` or `rewrite` string, and it fills the review section's defaults. |
 | `output-styles/millwright.md` | Sets the reply style. Its `force-for-plugin: true` applies it whenever the plugin is enabled. |
 | `tools/review_pr.py` | Runs the adversarial review of a pull request in a fresh `claude -p` session, which loads this plugin through `--plugin-dir`, and reads CI's suite result for the reviewed commit in place of running the suite. |
 | `tools/merge_step.py` | Merges a step's pull request into its stone branch once CI is green, then posts the step's brief. From 0.1.10 on, it reads the head's check runs when GitHub lists no run, and it waits ten minutes for a first run. |
 | `tools/test_hooks.py`, `tools/test_review_pr.py`, `tools/test_merge_step.py` | Test the hooks, the review tool and the merge tool. Each takes the repository to check as its argument. |
-| `tools/test_agents.py` | Tests the step builder's definition: its fixed fields, no field Claude Code ignores, the standing items of its body, the coordinate-stone skill's call, and no skill or agent that names a repository's worktree folder. It accepts the repository as its argument and reads only the plugin's files. |
+| `tools/test_agents.py` | Tests the step builder's definition: its fixed fields, no field Claude Code ignores, the standing items of its body, the coordinate-stone skill's call, no skill or agent that names a repository's worktree folder, and the clauses the start-stone, close-stone and coordinate-stone skills hold for the plan's hand-overs, the stone registry, the gotchas and the worktree. It accepts the repository as its argument and reads only the plugin's files. |
 | `tools/run_checks.py` | Runs the four tests against one repository and prints one summary line per test. |
 | `tools/fixture/.claude/mw.json` | Gives the tests a fixed data file, the engine's lists at `v0.1.0`. |
 | `templates/mw.json` | Gives a new repository its first data file. |
@@ -28,14 +28,14 @@ This plugin holds the way of working that the Millwright engine and the reposito
 
 ## How a repository enables it
 
-1. Copy `templates/mw.json` to `.claude/mw.json` and fill in the repository's name, its worktree folder, its guarded files and folders, its scratch patterns and its costly paths.
+1. Copy `templates/mw.json` to `.claude/mw.json` and fill in the repository's name, its worktree folder, its guarded files and folders, its scratch patterns and its costly paths. A repository that keeps a stone registry also adds the optional `stone_registry` key, whose `file` names the registry and whose `rewrite` names the command that writes the files built from the registry; the `mw:coordinate-stone` and `mw:close-stone` skills then name both in the first and the closing step.
 2. Copy `templates/require_plugin.py` to `.claude/hooks/require_plugin.py` without changing a byte.
 3. Add three keys to `.claude/settings.json`:
 
 ```json
 {
   "extraKnownMarketplaces": {
-    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.11"}}
+    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.12"}}
   },
   "enabledPlugins": {"mw@millwright": true},
   "hooks": {
