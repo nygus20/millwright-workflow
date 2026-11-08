@@ -9,7 +9,10 @@ parse; `name`, `model` and `effort` hold their fixed values; no field Claude Cod
 ignores for a plugin agent, and no `tools` line, is present; the body names each
 standing item of the brief; the coordinate-stone skill starts `mw:step-builder`,
 and the sentence of that call says it passes no `model`; no skill, agent or hook
-names a concrete worktree folder, which only the data file's `worktrees` key holds.
+names a concrete worktree folder, which only the data file's `worktrees` key holds;
+the start-stone, close-stone and coordinate-stone skills hold the clauses each
+stone needs (the plan's hand-overs, the stone registry, where a gotcha lands, the
+worktree under `<worktrees>`), and no skill names the retired "Common Gotchas".
 A concrete folder is a `<word>-worktrees` name, or an absolute path from a drive
 letter or a home folder that runs through a folder named `worktrees`; the
 placeholder `<worktrees>` and the bare key stay allowed. Each check runs once on
@@ -34,6 +37,20 @@ STANDING = {"the rule files": ".claude/rules/", "the worktree line": "`git workt
             "the lint": "`lint` skills", "the base": "against the base the brief names",
             "no draft": "never as a draft", "the report": "200 words"}
 CALL = "`mw:step-builder`"
+# The clauses each stone skill holds: the plan's hand-overs (engine issue 831), the stone registry (engine
+# issue 877), where a gotcha lands since the engine's AGENTS.md retired its gotcha section, and the worktree.
+CLAUSES = {
+    "start-stone": {"the hand-overs section": "a \"Hand-overs\" section",
+                    "the check against open stones": "`gh pr list --base main --state open",
+                    "the worktree": "git worktree add <worktrees>/<slug>"},
+    "close-stone": {"the registry": "holds a `stone_registry` key", "the rewrite": "the key's `rewrite` command",
+                    "where a gotcha lands": "where AGENTS.md \"Maintenance Rules\" says a gotcha lands",
+                    "the gotcha history": "`documents/gotcha-history.md`",
+                    "the worktree removal": "git worktree remove <worktrees>/<slug>"},
+    "coordinate-stone": {"the registry": "holds a `stone_registry` key",
+                         "the rewrite": "the key's `rewrite` command"},
+}
+RETIRED = "Common Gotchas"
 # No repository's folder is a constant here: the data file's worktrees key holds it (the plugin's rule 5).
 NAMED_FOLDER = re.compile(r"[\w.-]*\w-worktrees\b", re.I)
 ABSOLUTE_PATH = re.compile(r"(?:(?<![\w])[A-Za-z]:[\\/]|~/|/home/|/Users/)[^\s`'\"()<>,;]*")
@@ -69,6 +86,13 @@ def problems(agent, coordinate, others):
     found += [f"{name} names the worktree folder {folder}" for name, text in others.items()
               for folder in worktree_folders(text)]
     return found
+
+
+def clause_problems(skills):
+    """The clauses missing from the stone skills, and each skill that names the retired section."""
+    found = [f"{skill} does not name {what}" for skill, clauses in CLAUSES.items()
+             for what, text in clauses.items() if text not in skills.get(skill, "")]
+    return found + [f"{skill} names {RETIRED}" for skill, text in skills.items() if RETIRED in text]
 
 
 checks, failures = 0, []
@@ -126,6 +150,15 @@ check("the placeholder, the key, git's folder and another absolute path pass",
 for what, text in STANDING.items():
     check(f"planted, the body without {what}", f"the body does not name {what}" in problems(
         agent_text.replace(text, ""), coordinate_text, {}), True)
+
+skills = {path.parent.name: path.read_text(encoding="utf-8") for path in sorted((PLUGIN / "skills").glob("*/SKILL.md"))}
+check("the stone skills hold their clauses", clause_problems(skills), [])
+for skill, clauses in CLAUSES.items():
+    for what, text in clauses.items():
+        check(f"planted, {skill} without {what}", clause_problems({**skills, skill: skills[skill].replace(text, "")}),
+              [f"{skill} does not name {what}"])
+check("planted, the retired section", clause_problems({**skills, "x": f"AGENTS.md \"{RETIRED}\""}),
+      [f"x names {RETIRED}"])
 
 for line in failures:
     print(f"FAIL {line}")
