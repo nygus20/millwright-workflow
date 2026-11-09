@@ -26,8 +26,11 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
+import threading
+import types
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("review_pr", Path(__file__).resolve().parent / "review_pr.py")
@@ -204,7 +207,7 @@ rp.subprocess.run = lambda cmd, **kw: ran.append((cmd, kw["env"])) or rp.subproc
 rp.FROM_PLUGIN = True
 try:
     with contextlib.redirect_stderr(io.StringIO()):
-        stubbed = rp.review_in(Path("."), "prompt", {}, None, (1, "full", "", STEP, 60, "c", None, None, None))
+        stubbed = rp.review_in(Path("."), ["prompt"], {}, None, (1, "full", "", STEP, 60, "c", None, None, None))
 finally:
     rp.subprocess.run, rp.FROM_PLUGIN = saved_run, True
 check("review_in: a failed reviewer exits 2", stubbed, 2)
@@ -843,6 +846,240 @@ with tempfile.TemporaryDirectory() as scratch:
     (worktree / "RULES.md").unlink()
     check("prompt: a missing configured invariants file exits 2", exits_2(PROMPT_PR, "d", None, [], worktree), True)
     rp.DATA = ENGINE_DATA
+
+# Slices (the engine's issue 906): a diff past the budget splits at its files in git's order, the vendored summary
+# opens every slice, a file past the budget forms a slice of its own, and a diff within it is one slice, unchanged.
+
+
+def file_diff(path, lines):
+    return (f"diff --git a/{path} b/{path}\nindex 1111111..2222222 100644\n--- a/{path}\n+++ b/{path}\n"
+            f"@@ -1,1 +1,{lines} @@\n-old\n" + "".join(f"+line {i} of {path}\n" for i in range(lines)))
+
+
+LEAD = rp.vendored_summary("A\tthird_party/lib/a.h")
+FILES = [file_diff("src/a.cpp", 10), file_diff("src/b.cpp", 10), file_diff("tools/c.py", 10)]
+PLANTED = LEAD + "".join(FILES)
+BUDGET = rp.nbytes(LEAD) + rp.nbytes(FILES[0]) + rp.nbytes(FILES[1])  # two files fit, the third does not
+TIGHT = rp.nbytes(LEAD) + max(rp.nbytes(f) for f in FILES)  # one file fits
+cut = rp.slice_diff(PLANTED, BUDGET)
+check("slices: three files over the budget split at a file", [paths for _, paths in cut],
+      [["src/a.cpp", "src/b.cpp"], ["tools/c.py"]])
+check("slices: each slice is within the budget", all(rp.nbytes(text) <= BUDGET for text, _ in cut), True)
+check("slices: the vendored summary opens every slice", all(text.startswith(LEAD) for text, _ in cut), True)
+check("slices: no part of the diff is dropped", LEAD + "".join(text[len(LEAD):] for text, _ in cut), PLANTED)
+check("slices: a tighter budget gives one file per slice, in order",
+      [paths for _, paths in rp.slice_diff(PLANTED, TIGHT)],
+      [["src/a.cpp"], ["src/b.cpp"], ["tools/c.py"]])
+BIG = file_diff("src/big.cpp", 200)
+ranges = [("1" * 40, "2" * 40)]
+over = rp.slice_diff(LEAD + FILES[0] + BIG + FILES[2], BUDGET, ranges)
+check("slices: a file past the budget forms its own slice, in order", [paths for _, paths in over],
+      [["src/a.cpp"], ["src/big.cpp"], ["tools/c.py"]])
+check("slices: that slice holds the stat line and the command that reads it", over[1][0],
+      LEAD + " src/big.cpp | 201 (+200 -1)\nover the slice budget; read it with "
+      f"`git diff {'1' * 40} {'2' * 40} -- src/big.cpp` in the worktree\n")
+whole = rp.slice_diff(PLANTED, rp.nbytes(PLANTED))
+check("slices: a diff within the budget is one slice equal to the whole",
+      whole, [(PLANTED, ["src/a.cpp", "src/b.cpp", "tools/c.py"])])
+check("slices: a diff with no file is one slice", rp.slice_diff(LEAD, 1), [(LEAD, [])])
+removed = "diff --git a/old.txt b/old.txt\ndeleted file mode 100644\n--- a/old.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n"
+check("slices: a removed file is named by its old path", rp.block_path(removed), "old.txt")
+check("slices: a mode change is named from its header",
+      rp.block_path("diff --git a/run me.sh b/run me.sh\nold mode 100644\nnew mode 100755\n"), "run me.sh")
+check("slices: the size reads in whole kilobytes, rounded up", (rp.kb(0), rp.kb(1), rp.kb(800000), rp.kb(800001)),
+      (0, 1, 800, 801))
+
+with tempfile.TemporaryDirectory() as scratch:
+    worktree = Path(scratch)
+    (worktree / "CLAUDE.md").write_text("## Load-Bearing Invariants\n1. a rule\n", encoding="utf-8")
+    plain = rp.build_prompt(PROMPT_PR, PLANTED, None, [], worktree, None, 60, None)
+    check("slices: one slice builds today's prompt byte for byte",
+          rp.build_prompt(PROMPT_PR, whole[0][0], None, [], worktree, None, 60, None, None), plain)
+    check("slices: an unsliced prompt has no slices section", "# This review runs in slices" in plain, False)
+    three = rp.slice_diff(PLANTED, TIGHT)
+    second = rp.build_prompt(PROMPT_PR, three[1][0], None, [], worktree, None, 60, None, (three, 1))
+    check("slices: the section sits after CI's and before the diff",
+          in_order(second, "# CI's suite result", "# This review runs in slices", "# Diff"), True)
+    check("slices: the section names the slice, its files and the others per top folder",
+          ("This is slice 2 of 3." in second, "- src/b.cpp\n" in second, "- src/: 1 file(s)\n- tools/: 1 file(s)" in second,
+           "src/a.cpp" in second), (True, True, True, False))
+    check("slices: the section asks for this slice's files and the breaks across files",
+          "Report on this slice's files, plus any break across files that you can show from them." in second, True)
+    sliced_fix = rp.build_prompt(PROMPT_PR, three[0][0], None, [], worktree, (1, "abc", "- x", "a..b"), 30, None, (three, 0))
+    check("slices: a sliced fix check leaves another slice's earlier findings to it",
+          ("another slice decides the rest" in sliced_fix,
+           in_order(sliced_fix, "# The earlier review", "# This review runs in slices", "# Diff since")), (True, True))
+
+# merge_slices: one set of headings, bullets in slice order, `- none` only when every slice wrote it.
+SLICE_A = "## Blocking\n- src/a.cpp:1 one.\n- src/a.cpp:2 two.\n\n## Unresearched choices\n- none\n\n## Verified\n- a holds"
+SLICE_B = "## Blocking\n- none\n\n## Unresearched choices\n- tools/c.py:3 a format.\n\n## Verified\n- c holds"
+merged = rp.merge_slices([SLICE_A, SLICE_B])
+check("merge: the review keeps one set of the three headings",
+      (rp.well_formed(merged), merged.count("## Blocking"), merged.count("## Verified")), (True, 1, 1))
+check("merge: the blocking count is the slices' sum",
+      rp.blocking_count(merged), rp.blocking_count(SLICE_A) + rp.blocking_count(SLICE_B))
+check("merge: a none drops when another slice has a bullet", "none" in merged, False)
+check("merge: the bullets keep slice order", in_order(merged, "- tools/c.py:3", "## Verified", "- a holds", "- c holds"), True)
+SLICE_CLEAN = SLICE_B.replace("- tools/c.py:3 a format.", "- none")
+clean_merge = rp.merge_slices([SLICE_CLEAN, SLICE_CLEAN])
+check("merge: none stays when every slice wrote it",
+      (rp.blocking_count(clean_merge), "## Unresearched choices\n- none" in clean_merge), (0, True))
+check("merge: a slice's empty Blocking still blocks",
+      rp.blocking_count(rp.merge_slices(["## Blocking\n\n## Unresearched choices\n- none\n\n## Verified\n- x", SLICE_B])), 1)
+sliced_body = rp.comment_body(merged, 2, pr, 1, "full", "", STEP, "c", None, None, (800000, three))
+check("merge: the comment names each slice under the header",
+      in_order(sliced_body, "## Adversarial review", "_Reviewed in 3 slices of up to 800 KB; slice 1: src/a.cpp to src/a.cpp, "
+               "1 files_", "_Reviewed in 3 slices of up to 800 KB; slice 3: tools/c.py to tools/c.py, 1 files_", "## Blocking"),
+      True)
+check("merge: the marks read back as an unsliced round's", rp.parse_marks(sliced_body), (HEAD, 1, 1, None))
+check("merge: the next fix check reads the merged findings without the slice lines",
+      ("Reviewed in" in rp.earlier_findings(sliced_body), "- src/a.cpp:2 two." in rp.earlier_findings(sliced_body)),
+      (False, True))
+check("merge: an unsliced comment has no slice line", "Reviewed in" in rp.comment_body(merged, 2, pr, 1, "full", "", STEP, "c"),
+      False)
+
+
+def text_stream():
+    """A stream main can reconfigure, as it does the console; read it back with streamed()."""
+    return io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+
+
+def streamed(stream):
+    stream.flush()
+    return stream.buffer.getvalue().decode("utf-8")
+
+
+def main_run(argv, max_slices, wait=None):
+    """(exit code, stdout, stderr, git calls) of main up to the review worktree, which a stub refuses.
+
+    The pull request is into main, so it is a stone review with no earlier comment; the diff is PLANTED. CI's
+    wait runs through the scripted clock of the CI checks above unless wait replaces wait_for_ci.
+    """
+    data = json.loads(json.dumps(ENGINE_DATA))
+    data["review"]["max_slices"] = max_slices
+    clock, gits = [1000.0], []
+    pr_view = {"number": 83, "title": "t", "body": "b", "baseRefName": "main", "headRefName": "stone/x", "headRefOid": HEAD}
+
+    def git_run(cmd, **kw):
+        gits.append(cmd)
+        if "worktree" in cmd:
+            shutil.rmtree(cmd[4], ignore_errors=True)  # the folder main made for the refused worktree
+            return rp.subprocess.CompletedProcess(cmd, 1, "", "stub: no worktree\n")
+        out = {"merge-base": "a" * 40 + "\n", "--name-only": "src/a.cpp\n", "--name-status": ""}
+        key = next((word for word in ("merge-base", "--name-only", "--name-status") if word in cmd), None)
+        return rp.subprocess.CompletedProcess(cmd, 0, out[key] if key else PLANTED, "")
+    saved = (sys.argv, rp.repo_root, rp.mw_data.load_or_exit, rp.gh_json, rp.fetch_ref, rp.run, rp.list_comments, rp.sleep,
+             rp.now, rp.wait_for_ci, rp.ROOT, rp.DATA)
+    sys.argv = ["review_pr.py"] + argv
+    rp.repo_root, rp.mw_data.load_or_exit = (lambda: PLUGIN), (lambda root: data)
+    rp.gh_json, rp.fetch_ref, rp.run = (lambda args: pr_view), (lambda ref: rp.subprocess.CompletedProcess([], 0, "", "")), git_run
+    rp.list_comments, rp.now = (lambda number: []), (lambda: clock[0])
+    rp.sleep = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    rp.wait_for_ci = wait or rp.wait_for_ci
+    out, err = text_stream(), text_stream()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = rp.main()
+    finally:
+        (sys.argv, rp.repo_root, rp.mw_data.load_or_exit, rp.gh_json, rp.fetch_ref, rp.run, rp.list_comments, rp.sleep,
+         rp.now, rp.wait_for_ci, rp.ROOT, rp.DATA) = saved
+    return code, streamed(out).splitlines(), streamed(err), gits
+
+
+code, said, _, _ = main_run(["83", "--slice-bytes", str(BUDGET)], 8)
+size_line = f"[review_pr] #83: diff of {rp.kb(rp.nbytes(PLANTED))} KB in 3 files; 2 slices of up to {rp.kb(BUDGET)} KB"
+check("size: the size line prints before the CI wait", in_order("\n".join(said), size_line, "waiting for CI's suite result",
+                                                                 "CI has not posted its suite result"), True)
+check("size: the run goes on to the worktree and stops at the stub", code, 2)
+check("size: one slice says so", main_run(["83"], 8)[1][1],
+      f"[review_pr] #83: diff of {rp.kb(rp.nbytes(PLANTED))} KB in 3 files; 1 slice of up to 800 KB")
+waits = []
+code, said, err, gits = main_run(["83", "--slice-bytes", str(BUDGET)], 1, lambda *a: waits.append(a))
+check("size: a count past max_slices exits 2 before the CI wait", (code, waits), (2, []))
+check("size: the refusal names the size, the count and the key",
+      f"a diff of {rp.kb(rp.nbytes(PLANTED))} KB needs 2 slices, over review.max_slices 1; split the review by hand or "
+      "raise the key" in err, True)
+check("size: no worktree is made after the refusal", any("worktree" in cmd for cmd in gits), False)
+check("size: --slice-bytes parses", parse(["83", "--slice-bytes", "500000"]).slice_bytes, 500000)
+check("size: --slice-bytes 0 refuses", rp.flag_error(parse(["83", "--slice-bytes", "0"])) is not None, True)
+
+# review_in over a sliced round: every slice runs at once in its own worktree; a slice that fails once runs
+# again, and one that fails twice exits 2 with nothing posted.
+WELL = "## Blocking\n- none\n\n## Unresearched choices\n- none\n\n## Verified\n- read it"
+
+
+def sliced_run(answer, post=False, slices=2):
+    """(exit code, claude calls as (cwd, attempt), posted bodies, stderr) of review_in over planted slices."""
+    calls, posted, lock = [], [], threading.Lock()
+
+    def fake(cmd, **kw):
+        if cmd[0] == "git":
+            if "remove" in cmd:
+                shutil.rmtree(cmd[-1], ignore_errors=True)
+            return rp.subprocess.CompletedProcess(cmd, 0, "", "")
+        with lock:
+            attempt = sum(1 for cwd, _ in calls if cwd == kw["cwd"]) + 1
+            calls.append((kw["cwd"], attempt))
+        code, text = answer(kw["cwd"], attempt)
+        return rp.subprocess.CompletedProcess(cmd, code, text, "the reviewer's stderr")
+    saved = (rp.subprocess.run, rp.post_comment)
+    rp.subprocess.run = fake
+    rp.post_comment = lambda number, body, existing: posted.append(body) or rp.subprocess.CompletedProcess([], 0, "", "")
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            code = rp.review_in(Path("first"), [f"prompt {k}" for k in range(slices)], pr, types.SimpleNamespace(pr=83, post=post),
+                                (1, "full", "", STEP, 60, "c", None, None, None), (800000, three[:slices]))
+    finally:
+        rp.subprocess.run, rp.post_comment = saved
+    return code, calls, posted, err.getvalue()
+
+
+together = threading.Barrier(2, timeout=10)
+met = []
+
+
+def at_once(cwd, attempt):
+    try:
+        together.wait()
+        met.append(True)
+    except threading.BrokenBarrierError:
+        met.append(False)
+    return 0, WELL
+
+
+code, calls, posted, _ = sliced_run(at_once, post=True)
+check("slices: two slices ran at once", met, [True, True])
+check("slices: each ran in a worktree of its own, the first in the round's", (len({cwd for cwd, _ in calls}),
+                                                                            Path("first") in {cwd for cwd, _ in calls}), (2, True))
+check("slices: a clean sliced round posts one comment and exits 0", (code, len(posted)), (0, 1))
+check("slices: the posted comment names both slices", posted and posted[0].count("_Reviewed in 2 slices"), 2)
+code, calls, posted, err = sliced_run(lambda cwd, attempt: (1, "") if attempt == 1 else (0, WELL), post=True)
+check("slices: a slice that fails once runs again and passes", (code, len(calls), len(posted)), (0, 4, 1))
+check("slices: the rerun is said", "slice 1 of 2: claude exited 1; running it once more" in err, True)
+code, calls, posted, err = sliced_run(lambda cwd, attempt: (0, "half a review") if cwd != Path("first") else (0, WELL), post=True)
+check("slices: a slice that fails twice exits 2 and posts nothing", (code, posted, len(calls)), (2, [], 3))
+check("slices: the failure names the slice and the reviewer's last lines",
+      ("slice 2 of 2 failed twice: its reply lacks one of the three headings" in err, "half a review" in err), (True, True))
+
+# The data file's two slice keys: the defaults fill in, a file sets them, and a value that is not a positive integer
+# is refused.
+check("data: the slice defaults", (ENGINE_DATA["review"]["slice_bytes"], ENGINE_DATA["review"]["max_slices"]), (800000, 8))
+with tempfile.TemporaryDirectory() as scratch:
+    keyed = Path(scratch)
+    (keyed / ".claude").mkdir()
+    for review_keys, want in (({"slice_bytes": 500000, "max_slices": 3}, (500000, 3)),
+                              ({"slice_bytes": "800000"}, "review.slice_bytes must be a positive integer"),
+                              ({"max_slices": 0}, "review.max_slices must be a positive integer"),
+                              ({"max_slices": True}, "review.max_slices must be a positive integer")):
+        (keyed / ".claude" / "mw.json").write_text(json.dumps({**OTHER, "review": {**OTHER["review"], **review_keys}}),
+                                                   encoding="utf-8")
+        try:
+            loaded = rp.mw_data.load(keyed)["review"]
+            got = (loaded["slice_bytes"], loaded["max_slices"])
+        except rp.mw_data.DataFileError as error:
+            got = str(error).split("key ", 1)[-1]
+        check(f"data: the slice keys {review_keys}", got, want)
 
 for line in failures:
     print(f"FAIL {line}")

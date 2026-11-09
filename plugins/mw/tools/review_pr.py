@@ -4,6 +4,7 @@ Usage:
     python "${CLAUDE_PLUGIN_ROOT}/tools/review_pr.py" <pr-number> [--stone ID] [--context FILE]... [--post]
                                                       [--full] [--extra-round [agent|owner]] [--force-review]
                                                       [--model NAME] [--effort LEVEL] [--max-turns N] [--no-wait-ci]
+                                                      [--slice-bytes N]
 
 What it does. It fetches the pull request's title and body with `gh` and its
 diff with git, from the merge base (GitHub refuses a pull-request diff over 300
@@ -105,6 +106,22 @@ run and allow one filtered to the test files a finding names. The reviewer
 runs with MW_REVIEWER=1 in its environment, and the suite wrapper refuses an
 unfiltered run under it (the engine's issue 686).
 
+Slices (the engine's issue 906). A diff past one prompt's size is split by
+path. The data file's review.slice_bytes, 800000 by default, is the most diff
+text one slice holds; --slice-bytes N sets it for one run. The diff splits at
+its `diff --git` lines, in git's path order, and the vendored summary opens
+every slice; one file past the budget forms a slice of its own that holds its
+stat line and the command that reads it. Before the CI wait the tool prints
+the diff's size, its file count and the slice count, and a count past the data
+file's review.max_slices, 8 by default, exits 2 at once. A diff within the
+budget is one slice, and its prompt and comment are those of an unsliced round.
+Each slice of a larger one gets its own reviewer in its own detached worktree,
+all at once, with the same model, effort and turns. A slice whose reviewer
+fails or answers without the three headings runs once more; a second failure
+exits 2 and posts nothing. The slices' reviews merge into one review under the
+three headings, and the comment names each slice's paths; its marks and its
+round are those of an unsliced round. A fix check's diff slices by the same rule.
+
 From the plugin. The plugin's copy of this tool sets FROM_PLUGIN, and then the
 reviewer loads that copy of the plugin with --plugin-dir and waits for its
 plugins to install before its first turn. The engine's copy leaves the
@@ -120,6 +137,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # The plugin's copy sets FROM_PLUGIN to True; the engine's copy leaves it False. It decides where the loader sits
@@ -434,13 +452,15 @@ def stone_plan(base_ref):
     return rows[0]["body"] if rows and rows[0].get("body") else None
 
 
-def build_prompt(pr, diff, stone, context_files, root, fix_check=None, turns=FULL_TURNS, ci=None):
+def build_prompt(pr, diff, stone, context_files, root, fix_check=None, turns=FULL_TURNS, ci=None, sliced=None):
     """root is the worktree at the pull request head, so the exit test and the invariants are the reviewed text.
 
     fix_check is None for a full review. For a fix check it is (earlier round, reviewed commit, earlier
     findings, commits), and diff holds only the commits since the reviewed one, without the clean merges
     of the base; commits names the ranges the diff covers. ci is CI's suite result for the head, as
     ci_result returns it, or None when CI has not posted it; the section sits after the invariants.
+    sliced is (slices, index) for one slice of a sliced round, whose section sits just before the diff;
+    diff is then that slice's text. None, for a round of one slice, adds nothing.
     """
     parts = [instructions(fix_check), turn_budget(turns)]
     body = pr.get("body") or "(no body)"
@@ -475,6 +495,9 @@ def build_prompt(pr, diff, stone, context_files, root, fix_check=None, turns=FUL
     if fix_check:
         number, commit, findings, commits = fix_check
         parts.append(f"# The earlier review (round {number}, commit {commit[:7]})\n\n{findings}")
+    if sliced is not None:
+        parts.append(slices_section(sliced[0], sliced[1], fix_check))
+    if fix_check:
         parts.append(f"# Diff since the reviewed commit ({commits})\n\n```diff\n{diff}\n```")
     else:
         parts.append("# Diff\n\n```diff\n" + diff + "\n```")
@@ -707,6 +730,122 @@ def join_ranges(parts):
     return vendored_summary("\n".join(first.values())) + "".join(diff for diff, _ in parts)
 
 
+FILE_START = re.compile(r"^diff --git ", re.M)  # a hunk's lines start with a space, +, -, \ or @@, never with this
+
+
+def nbytes(text):
+    return len(text.encode("utf-8"))
+
+
+def kb(size):
+    """A byte count as whole kilobytes of 1,000 bytes, rounded up."""
+    return -(-size // 1000)
+
+
+def block_path(block):
+    """The path one file's diff names: its new path, or its old one for a removal."""
+    header = block.split("\n@@", 1)[0].splitlines()
+    for prefix, strip in (("+++ ", "b/"), ("--- ", "a/"), ("rename to ", ""), ("copy to ", "")):
+        for line in header[1:]:
+            if line.startswith(prefix) and line[len(prefix):] != "/dev/null":
+                name = line[len(prefix):].rstrip("\t").strip('"')
+                return name[len(strip):] if strip and name.startswith(strip) else name
+    rest = header[0][len("diff --git "):]
+    half = (len(rest) - 5) // 2  # "a/<path> b/<path>" for a mode change or an empty file
+    return rest[2:2 + half] if rest[2:2 + half] == rest[half + 5:] else rest
+
+
+def stat_line(block, path):
+    """The file's line in `git diff --stat` form, counted from its own diff."""
+    lines = block.split("\n@@", 1)[1].splitlines() if "\n@@" in block else []
+    added = sum(line.startswith("+") for line in lines)
+    removed = sum(line.startswith("-") for line in lines)
+    return f" {path} | {added + removed} (+{added} -{removed})"
+
+
+def slice_diff(diff_text, budget, ranges=(("<from>", "<to>"),)):
+    """The diff as slices of at most budget bytes, each (text, paths), split at its files in git's order.
+
+    The text before the first file, the vendored summary, opens every slice. A diff within the budget is
+    one slice whose text is diff_text itself. A file that would pass the budget on its own forms a slice
+    of its own holding its stat line and the command that reads it, over each of ranges.
+    """
+    starts = [match.start() for match in FILE_START.finditer(diff_text)]
+    lead = diff_text[:starts[0]] if starts else diff_text
+    blocks = [diff_text[a:b] for a, b in zip(starts, starts[1:] + [len(diff_text)])]
+    paths = [block_path(block) for block in blocks]
+    if not blocks or nbytes(diff_text) <= budget:
+        return [(diff_text, list(dict.fromkeys(paths)))]
+    slices, held, size = [], [], nbytes(lead)
+
+    def close():
+        if held:
+            slices.append((lead + "".join(block for block, _ in held), list(dict.fromkeys(p for _, p in held))))
+        return [], nbytes(lead)
+    for block, path in zip(blocks, paths):
+        if nbytes(lead) + nbytes(block) > budget:
+            held, size = close()
+            reads = " and ".join(f"`git diff {a} {b} -- {path}`" for a, b in ranges)
+            slices.append((f"{lead}{stat_line(block, path)}\nover the slice budget; read it with {reads} in the worktree\n",
+                           [path]))
+            continue
+        if size + nbytes(block) > budget:
+            held, size = close()
+        held.append((block, path))
+        size += nbytes(block)
+    close()
+    return slices
+
+
+def slices_section(slices, index, fix_check):
+    """The prompt's section for slice index of a sliced round: what it holds and what the other slices hold."""
+    folders = {}
+    for other, (_, paths) in enumerate(slices):
+        for path in paths if other != index else []:
+            top = path.split("/", 1)[0] + "/" if "/" in path else "the top level"
+            folders[top] = folders.get(top, 0) + 1
+    lines = ["# This review runs in slices", "",
+             f"The diff is too large for one prompt, so {len(slices)} reviewers each read one slice of it at once. "
+             f"This is slice {index + 1} of {len(slices)}. It holds these files:"]
+    lines += [f"- {path}" for path in slices[index][1]]
+    lines += ["", "The other slices hold, counted per top folder:"]
+    lines += [f"- {top}: {count} file(s)" for top, count in sorted(folders.items())]
+    lines += ["", "Read any file in the worktree when a finding depends on it, a file of another slice included. "
+              "Report on this slice's files, plus any break across files that you can show from them."]
+    if fix_check:
+        lines[-1] += (" Decide on an earlier finding only when this slice holds the file it names, or when it names "
+                      "no file; another slice decides the rest.")
+    return "\n".join(lines)
+
+
+SECTION = re.compile(r"^## (Blocking|Unresearched choices|Verified)\s*$", re.M)
+NONE_LINE = ("- none", "* none", "none")
+
+
+def merge_slices(reviews):
+    """The slices' reviews as one review with one set of the three headings, bullets in slice order.
+
+    A section that holds only `- none` adds nothing; `- none` stays only when every slice wrote it. A
+    section a slice left empty adds nothing either, so a merged Blocking with nothing in it still blocks.
+    """
+    merged = {name: [] for name in ("Blocking", "Unresearched choices", "Verified")}
+    wrote_none = {name: 0 for name in merged}
+    for review in reviews:
+        marks = list(SECTION.finditer(review))
+        for mark, after in zip(marks, marks[1:] + [None]):
+            text = review[mark.end():after.start() if after else len(review)].strip()
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            if len(lines) == 1 and lines[0].rstrip(".").lower() in NONE_LINE:
+                wrote_none[mark.group(1)] += 1
+            elif text:
+                merged[mark.group(1)].append(text)
+    parts = []
+    for name, texts in merged.items():
+        body = "\n".join(texts) or ("- none" if wrote_none[name] == len(reviews) else "")
+        parts.append(f"## {name}\n{body}".rstrip())
+    return "\n\n".join(parts)
+
+
 def extra_round_note(earlier, extra_round):
     """The line a run prints when --extra-round is given on a round that does not follow an exit 3, or None."""
     if not extra_round or (earlier is not None and earlier[2] == 3):
@@ -757,10 +896,12 @@ def spent_line(extra):
     return "Fix round spent: the owner decides."
 
 
-def comment_body(review, blocking, pr, number, mode, note, profile, commits, earlier_code=None, extra=None):
+def comment_body(review, blocking, pr, number, mode, note, profile, commits, earlier_code=None, extra=None,
+                 sliced=None):
     """The posted comment: the markers the next round reads, the header, the review and the footer.
 
-    profile is (kind, model, effort); extra is carried_extra's value for this round.
+    profile is (kind, model, effort); extra is carried_extra's value for this round; sliced is (budget,
+    slices) for a sliced round, which adds one line per slice under the header, and None otherwise.
     """
     kind, model, effort = profile
     code = exit_code(blocking, earlier_code)
@@ -769,6 +910,10 @@ def comment_body(review, blocking, pr, number, mode, note, profile, commits, ear
     if extra is not None:
         lines.append(f"<!-- mw-review-extra: {extra[0]}, round {extra[1]} -->")
     lines += [f"## Adversarial review (fresh session), round {number}, {mode}", ""]
+    if sliced is not None:
+        budget, slices = sliced
+        lines += [f"_Reviewed in {len(slices)} slices of up to {kb(budget)} KB; slice {index}: {paths[0]} to "
+                  f"{paths[-1]}, {len(paths)} files_" for index, (_, paths) in enumerate(slices, 1)] + [""]
     if note:
         lines += [f"_Note: {note}._", ""]
     lines += [review, ""]
@@ -914,6 +1059,8 @@ def arg_parser():
     ap.add_argument("--max-turns", type=int, help=f"default {FULL_TURNS} for a full review, {FIX_CHECK_TURNS} for a fix check")
     ap.add_argument("--no-wait-ci", action="store_true",
                     help=f"list the comments for CI's suite result once instead of waiting up to {CI_WAIT_SECONDS} s")
+    ap.add_argument("--slice-bytes", type=int, help="the most diff text one slice holds, for this run; default the "
+                    "data file's review.slice_bytes")
     return ap
 
 
@@ -925,7 +1072,42 @@ def flag_error(args):
     """
     if args.extra_round == "agent" and not args.post:
         return "--extra-round agent needs --post, because only a posted round records the author's grant"
+    if args.slice_bytes is not None and args.slice_bytes < 1:
+        return "--slice-bytes needs a positive number of bytes"
     return None
+
+
+def add_worktree(commit):
+    """A detached worktree at commit in a new temporary folder, or None after writing git's error."""
+    worktree = Path(tempfile.mkdtemp(prefix="mw_review_"))
+    added = run(["git", "worktree", "add", "--detach", str(worktree), commit], cwd=ROOT)
+    if added.returncode != 0:
+        sys.stderr.write(added.stderr)
+        return None
+    return worktree
+
+
+def remove_worktree(worktree):
+    removed = run(["git", "worktree", "remove", "--force", str(worktree)], cwd=ROOT)
+    if removed.returncode != 0:
+        sys.stderr.write(
+            f"[review_pr] could not remove the review worktree at {worktree}: {removed.stderr.strip()}\n"
+            "[review_pr] remove it by hand, then run `git worktree prune`.\n"
+        )
+
+
+def plan_slices(pr_number, diff_text, budget, ranges):
+    """The round's slices, after the size line; None, after the refusal, when they pass review.max_slices."""
+    slices = slice_diff(diff_text, budget, ranges)
+    size, files, count = kb(nbytes(diff_text)), len({p for _, paths in slices for p in paths}), len(slices)
+    print(f"[review_pr] #{pr_number}: diff of {size} KB in {files} files; {count} slice{'s' if count > 1 else ''} "
+          f"of up to {kb(budget)} KB")
+    limit = DATA["review"]["max_slices"]
+    if count > limit:
+        sys.stderr.write(f"[review_pr] #{pr_number}: a diff of {size} KB needs {count} slices, over review.max_slices "
+                         f"{limit}; split the review by hand or raise the key\n")
+        return None
+    return slices
 
 
 def main():
@@ -1029,25 +1211,27 @@ def main():
     print(f"[review_pr] #{args.pr} round {number}, {mode}, {kind} review, model {profile[1]}, effort {profile[2]}, {turns} turns")
     if note:
         print(f"[review_pr] note: {note}")
+    # The size check comes before the CI wait, so a diff past review.max_slices costs no ten minutes (engine issue 906).
+    budget = args.slice_bytes or DATA["review"]["slice_bytes"]
+    slices = plan_slices(args.pr, diff_text, budget, ranges)
+    if slices is None:
+        return 2
     ci = wait_for_ci(args.pr, head, ci_limit(args))
 
-    worktree = Path(tempfile.mkdtemp(prefix="mw_review_"))
-    added = run(["git", "worktree", "add", "--detach", str(worktree), pr["headRefOid"]], cwd=ROOT)
-    if added.returncode != 0:
-        sys.stderr.write(added.stderr)
+    worktree = add_worktree(pr["headRefOid"])
+    if worktree is None:
         return 2
     try:
-        prompt = build_prompt(pr, diff_text, args.stone, args.context, worktree, fix_check, turns, ci)
+        if len(slices) == 1:
+            prompts = [build_prompt(pr, diff_text, args.stone, args.context, worktree, fix_check, turns, ci)]
+        else:
+            prompts = [build_prompt(pr, text, args.stone, args.context, worktree, fix_check, turns, ci, (slices, index))
+                       for index, (text, _) in enumerate(slices)]
         earlier_code = earlier[2] if earlier else None
         review_round = (number, mode, note, profile, turns, commits, found[0] if found else None, earlier_code, extra)
-        return review_in(worktree, prompt, pr, args, review_round)
+        return review_in(worktree, prompts, pr, args, review_round, (budget, slices) if len(slices) > 1 else None)
     finally:
-        removed = run(["git", "worktree", "remove", "--force", str(worktree)], cwd=ROOT)
-        if removed.returncode != 0:
-            sys.stderr.write(
-                f"[review_pr] could not remove the review worktree at {worktree}: {removed.stderr.strip()}\n"
-                "[review_pr] remove it by hand, then run `git worktree prune`.\n"
-            )
+        remove_worktree(worktree)
 
 
 def reviewer_call(profile, turns):
@@ -1081,10 +1265,8 @@ def reviewer_call(profile, turns):
     return cmd, env
 
 
-def review_in(worktree, prompt, pr, args, review_round):
-    number, mode, note, profile, turns, commits, comment_id, earlier_code, extra = review_round
-    cmd, env = reviewer_call(profile, turns)
-    proc = subprocess.run(
+def run_reviewer(cmd, env, prompt, worktree):
+    return subprocess.run(
         cmd,
         input=prompt,
         text=True,
@@ -1094,6 +1276,68 @@ def review_in(worktree, prompt, pr, args, review_round):
         env=env,
         shell=(os.name == "nt"),
     )
+
+
+def review_slice(index, count, prompt, worktree, cmd, env):
+    """(review, None) for one slice of a sliced round, or (None, the last lines) after its second failure.
+
+    A failed process or a reply without the three headings runs once more: a sliced round loses every
+    slice's review when one slice fails, and several reviewers at once may meet the account's limits.
+    """
+    for attempt in (1, 2):
+        proc = run_reviewer(cmd, env, prompt, worktree)
+        review = strip_preamble(proc.stdout.strip()) if proc.returncode == 0 else ""
+        if review and well_formed(review):
+            return review, None
+        why = f"claude exited {proc.returncode}" if proc.returncode != 0 else "its reply lacks one of the three headings"
+        if attempt == 1:
+            sys.stderr.write(f"[review_pr] slice {index + 1} of {count}: {why}; running it once more\n")
+    tail = "\n".join((proc.stdout.strip() or proc.stderr.strip()).splitlines()[-20:])
+    return None, f"{why}; the last lines of the reviewer's output:\n{tail}"
+
+
+def review_slices(worktree, prompts, pr, cmd, env):
+    """The merged review of a sliced round, or None after naming each slice that failed twice.
+
+    Slice 1 runs in worktree; each other slice gets a detached worktree of its own at the head, made
+    before any reviewer starts and removed after the last ends, so two reviewers never build in one folder.
+    """
+    trees = [worktree]
+    try:
+        for _ in prompts[1:]:
+            tree = add_worktree(pr["headRefOid"])
+            if tree is None:
+                return None
+            trees.append(tree)
+        with ThreadPoolExecutor(max_workers=len(prompts)) as pool:
+            results = list(pool.map(lambda index: review_slice(index, len(prompts), prompts[index], trees[index], cmd, env),
+                                    range(len(prompts))))
+    finally:
+        for tree in trees[1:]:
+            remove_worktree(tree)
+    failed = [(index, why) for index, (review, why) in enumerate(results, 1) if review is None]
+    for index, why in failed:
+        sys.stderr.write(f"[review_pr] slice {index} of {len(prompts)} failed twice: {why}\n")
+    if failed:
+        sys.stderr.write(f"[review_pr] nothing posted to #{pr.get('number')}; rerun the same round\n")
+        return None
+    for index, (review, _) in enumerate(results, 1):
+        if announces_wait(review):
+            sys.stderr.write(f"[review_pr] warning: slice {index}'s review ends by announcing a wait on a task it "
+                             "started; its Verified section may rest on a run nobody read\n")
+    return merge_slices([review for review, _ in results])
+
+
+def review_in(worktree, prompts, pr, args, review_round, sliced=None):
+    """Run the round's reviewer, or one per slice when sliced is (budget, slices), and post or print the comment."""
+    profile, turns = review_round[3], review_round[4]
+    cmd, env = reviewer_call(profile, turns)
+    if sliced is not None:
+        review = review_slices(worktree, prompts, pr, cmd, env)
+        if review is None:
+            return 2
+        return finish_review(review, pr, args, review_round, sliced)
+    proc = run_reviewer(cmd, env, prompts[0], worktree)
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
         # `claude -p` reports some failures, such as running out of turns, on stdout only.
@@ -1116,8 +1360,14 @@ def review_in(worktree, prompt, pr, args, review_round):
     if announces_wait(review):
         sys.stderr.write(f"[review_pr] warning: the review on #{args.pr} ends by announcing a wait on a task it started; "
                          "its Verified section may rest on a run nobody read\n")
+    return finish_review(review, pr, args, review_round, None)
+
+
+def finish_review(review, pr, args, review_round, sliced):
+    """Post or print the comment over a well-formed review and return the round's exit code."""
+    number, mode, note, profile, turns, commits, comment_id, earlier_code, extra = review_round
     blocking = blocking_count(review)
-    body = comment_body(review, blocking, pr, number, mode, note, profile, commits, earlier_code, extra)
+    body = comment_body(review, blocking, pr, number, mode, note, profile, commits, earlier_code, extra, sliced)
 
     if args.post:
         post = post_comment(args.pr, body, comment_id)

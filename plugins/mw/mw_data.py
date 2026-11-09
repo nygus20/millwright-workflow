@@ -11,7 +11,8 @@ records how it came from the engine's .claude/hooks/.
 load(root) returns the file's object with the review section's defaults filled
 in, or raises DataFileError naming what is wrong: a missing file, a file that is
 not JSON, an unknown version, a missing required key or a value of the wrong
-type. The optional top-level stone_registry object names the file that records
+type, review.slice_bytes and review.max_slices included, which must be positive
+integers when the file sets them. The optional top-level stone_registry object names the file that records
 a repository's stones and the command that rewrites what is made from it; when
 present, it must hold a file string and a rewrite string. A repository without
 the key loads as before. load_or_exit(root) is the form a hook or a tool calls:
@@ -42,7 +43,11 @@ REVIEW_DEFAULTS = {
     "findings_folder": "documents/findings/",
     # The phase plan's stone headings, tried in order: the engine's form and the game's two (engine issue 876).
     "stone_headings": ["^### Stone {id}\\b", "^### {id} — ", "^### The {id} stone$"],
+    # The review tool splits a diff past slice_bytes of text into slices by path, at most max_slices (engine issue 906).
+    "slice_bytes": 800000,
+    "max_slices": 8,
 }
+SLICE_KEYS = ("slice_bytes", "max_slices")  # each a positive integer
 
 
 class DataFileError(Exception):
@@ -94,6 +99,9 @@ def load(root):
         _require(registry, "rewrite", str, "stone_registry.")
     for key, default in REVIEW_DEFAULTS.items():
         review.setdefault(key, json.loads(json.dumps(default)))  # a copy, so no caller edits the defaults
+    for key in SLICE_KEYS:
+        if type(review[key]) is not int or review[key] < 1:
+            raise DataFileError(f"{DATA_FILE} key review.{key} must be a positive integer")
     return data
 
 
