@@ -17,7 +17,7 @@ This plugin holds the way of working that the Millwright engine and the reposito
 | `hooks/session_start.py` | Sets `core.hooksPath` when the repository holds `git-hooks/`, writes the session's two markers, and prints one context line naming the plugin's version, its folder and the repository's worktree folder. |
 | `mw_data.py` | Loads `.claude/mw.json`. It refuses a missing file, an unknown version, a missing required key and an optional `stone_registry` key that lacks its `file` or `rewrite` string, and it fills the review section's defaults. |
 | `output-styles/millwright.md` | Sets the reply style. Its `force-for-plugin: true` applies it whenever the plugin is enabled. |
-| `tools/review_pr.py` | Runs the adversarial review of a pull request in a fresh `claude -p` session, which loads this plugin through `--plugin-dir`, and reads CI's suite result for the reviewed commit in place of running the suite. |
+| `tools/review_pr.py` | Runs the adversarial review of a pull request in a fresh `claude -p` session, which loads this plugin through `--plugin-dir`, and reads CI's suite result for the reviewed commit in place of running the suite. From 0.1.13 on, it splits a diff past the review section's `slice_bytes` into slices by path and reviews them at once. |
 | `tools/merge_step.py` | Merges a step's pull request into its stone branch once CI is green, then posts the step's brief. From 0.1.10 on, it reads the head's check runs when GitHub lists no run, and it waits ten minutes for a first run. |
 | `tools/test_hooks.py`, `tools/test_review_pr.py`, `tools/test_merge_step.py` | Test the hooks, the review tool and the merge tool. Each takes the repository to check as its argument. |
 | `tools/test_agents.py` | Tests the step builder's definition: its fixed fields, no field Claude Code ignores, the standing items of its body, the coordinate-stone skill's call, no skill or agent that names a repository's worktree folder, and the clauses the start-stone, close-stone and coordinate-stone skills hold for the plan's hand-overs, the stone registry, the gotchas and the worktree. It accepts the repository as its argument and reads only the plugin's files. |
@@ -35,7 +35,7 @@ This plugin holds the way of working that the Millwright engine and the reposito
 ```json
 {
   "extraKnownMarketplaces": {
-    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.12"}}
+    "millwright": {"source": {"source": "github", "repo": "nygus20/millwright-workflow", "ref": "v0.1.13"}}
   },
   "enabledPlugins": {"mw@millwright": true},
   "hooks": {
@@ -56,6 +56,13 @@ This plugin holds the way of working that the Millwright engine and the reposito
 A session that did not load the plugin writes no marker, and `require_plugin.py` then denies its first edit with a reason that names the pin. A session that only reads goes on.
 
 From 0.1.6 on, `require_plugin.py` also compares versions. When the pin's `ref` is a version tag, `v<version>`, the hook reads the session marker, or the process marker when the session marker is missing, and denies an edit when the marker records another version or none. Its reason names both versions and the fix: run `claude plugin update mw@millwright --scope project` in the repository's main checkout, or `claude plugin install mw@millwright --scope local` inside a worktree, then restart the session. Claude Code's installed-plugins record, `~/.claude/plugins/installed_plugins.json`, keeps the old version after a pin moves until that command runs, and `/reload-plugins` alone reloads the recorded version. The record holds one entry per folder, and the update command run inside a worktree rewrites the main checkout's entry, so a worktree takes the install command. A pin with no `ref`, or a `ref` that is not a version tag, keeps the loaded check alone. `onFailure` needs Claude Code 2.1.295 or later; an older version ignores the field.
+
+## The review section's slice keys
+
+The data file's `review` section takes two optional keys that set how the review tool splits a large diff. `mw_data.py` fills each default and refuses a value that is not a positive integer.
+
+- `slice_bytes`, 800000 by default, is the most diff text one slice holds, in bytes; `--slice-bytes N` overrides it for one run.
+- `max_slices`, 8 by default, is the most slices one round runs; a diff that needs more exits 2 before the CI wait.
 
 ## The session markers
 
