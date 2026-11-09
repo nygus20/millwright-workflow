@@ -910,6 +910,20 @@ with tempfile.TemporaryDirectory() as scratch:
           ("another slice decides the rest" in sliced_fix,
            in_order(sliced_fix, "# The earlier review", "# This review runs in slices", "# Diff since")), (True, True))
 
+    # A lone file past the budget is one slice, but a sliced one: its prompt holds the stat line, never the file.
+    lone_diff = LEAD + BIG
+    lone = rp.slice_diff(lone_diff, BUDGET, ranges)
+    lone_prompts = rp.round_prompts(PROMPT_PR, lone_diff, lone, None, [], worktree, None, 60, None)
+    check("slices: a lone file past the budget is a sliced round of one slice",
+          (len(lone), rp.is_sliced(lone, lone_diff), len(lone_prompts)), (1, True, 1))
+    check("slices: its prompt holds the stat line and the section, not the file's text",
+          (" src/big.cpp | 201 (+200 -1)" in lone_prompts[0], "# This review runs in slices" in lone_prompts[0],
+           "This is slice 1 of 1." in lone_prompts[0], "+line 7 of src/big.cpp" in lone_prompts[0]), (True, True, True, False))
+    check("slices: a lone fix check holds the stat line too", "+line 7 of src/big.cpp" in rp.round_prompts(
+        PROMPT_PR, lone_diff, lone, None, [], worktree, (1, "abc", "- x", "a..b"), 30, None)[0], False)
+    check("slices: a whole diff in one slice keeps today's prompt", (rp.is_sliced(whole, PLANTED),
+          rp.round_prompts(PROMPT_PR, PLANTED, whole, None, [], worktree, None, 60, None)), (False, [plain]))
+
 # merge_slices: one set of headings, bullets in slice order, `- none` only when every slice wrote it.
 SLICE_A = "## Blocking\n- src/a.cpp:1 one.\n- src/a.cpp:2 two.\n\n## Unresearched choices\n- none\n\n## Verified\n- a holds"
 SLICE_B = "## Blocking\n- none\n\n## Unresearched choices\n- tools/c.py:3 a format.\n\n## Verified\n- c holds"

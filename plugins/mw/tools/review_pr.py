@@ -805,11 +805,11 @@ def slices_section(slices, index, fix_check):
             top = path.split("/", 1)[0] + "/" if "/" in path else "the top level"
             folders[top] = folders.get(top, 0) + 1
     lines = ["# This review runs in slices", "",
-             f"The diff is too large for one prompt, so {len(slices)} reviewers each read one slice of it at once. "
-             f"This is slice {index + 1} of {len(slices)}. It holds these files:"]
+             f"The diff is too large for one prompt, so it runs in {len(slices)} slice(s), each read by its own "
+             f"reviewer at once. This is slice {index + 1} of {len(slices)}. It holds these files:"]
     lines += [f"- {path}" for path in slices[index][1]]
     lines += ["", "The other slices hold, counted per top folder:"]
-    lines += [f"- {top}: {count} file(s)" for top, count in sorted(folders.items())]
+    lines += [f"- {top}: {count} file(s)" for top, count in sorted(folders.items())] or ["- none"]
     lines += ["", "Read any file in the worktree when a finding depends on it, a file of another slice included. "
               "Report on this slice's files, plus any break across files that you can show from them."]
     if fix_check:
@@ -1096,6 +1096,20 @@ def remove_worktree(worktree):
         )
 
 
+def is_sliced(slices, diff_text):
+    """True unless the round is one slice holding the whole diff: a lone file past the budget, replaced by its
+    stat line, makes a sliced round of one slice, so the oversized text never reaches a prompt."""
+    return len(slices) > 1 or slices[0][0] != diff_text
+
+
+def round_prompts(pr, diff_text, slices, stone, context_files, root, fix_check, turns, ci):
+    """The round's prompts: today's one prompt over the whole diff, or one per slice with its slices section."""
+    if not is_sliced(slices, diff_text):
+        return [build_prompt(pr, diff_text, stone, context_files, root, fix_check, turns, ci)]
+    return [build_prompt(pr, text, stone, context_files, root, fix_check, turns, ci, (slices, index))
+            for index, (text, _) in enumerate(slices)]
+
+
 def plan_slices(pr_number, diff_text, budget, ranges):
     """The round's slices, after the size line; None, after the refusal, when they pass review.max_slices."""
     slices = slice_diff(diff_text, budget, ranges)
@@ -1222,14 +1236,10 @@ def main():
     if worktree is None:
         return 2
     try:
-        if len(slices) == 1:
-            prompts = [build_prompt(pr, diff_text, args.stone, args.context, worktree, fix_check, turns, ci)]
-        else:
-            prompts = [build_prompt(pr, text, args.stone, args.context, worktree, fix_check, turns, ci, (slices, index))
-                       for index, (text, _) in enumerate(slices)]
+        prompts = round_prompts(pr, diff_text, slices, args.stone, args.context, worktree, fix_check, turns, ci)
         earlier_code = earlier[2] if earlier else None
         review_round = (number, mode, note, profile, turns, commits, found[0] if found else None, earlier_code, extra)
-        return review_in(worktree, prompts, pr, args, review_round, (budget, slices) if len(slices) > 1 else None)
+        return review_in(worktree, prompts, pr, args, review_round, (budget, slices) if is_sliced(slices, diff_text) else None)
     finally:
         remove_worktree(worktree)
 
