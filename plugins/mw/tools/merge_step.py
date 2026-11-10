@@ -42,6 +42,18 @@ One command does a step's merge mechanics (the owner's ruling of 2026-10-13). In
 6. It posts the brief on the stone's pull request and prints it. It never squashes, deletes
    a branch or force-pushes, so a step stacked on the merged one keeps its base.
 
+One run at a time per stone (the engine's issue 935). Two runs on one stone at once each judged
+a merge without the other's step, so the stone branch held a tree no CI run had judged. Once the
+pull request names its stone, the tool takes the stone's lock, a file under the repository's
+common git folder (`git rev-parse --git-common-dir`), which every worktree shares. It holds the
+lock from the lookup of the stone's pull request, before the stacked check and the fetch, to the
+brief's post, so the briefs land in merge order. A second run on the same stone prints a line naming the holder's pull
+request, process id and start time, waits, and reads the pull request again once the lock frees.
+The lock is the operating system's lock on the file's first byte, which goes with its holder's
+process, so a run that died frees it; the next run finds the dead run's details still written,
+says that it takes the lock over, and goes on. Runs on two stones take two files and never wait
+for each other.
+
 The repository is the git top level of the caller's folder, not the folder this tool sits in, so
 the plugin's copy merges the repository it is run from. A folder outside a repository stops it.
 
@@ -50,7 +62,9 @@ Exit code: 0 merged and the brief posted; 1 a run on the head is red, nothing me
 """
 
 import argparse
+import contextlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -59,6 +73,9 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = None  # the repository: main sets it to the git top level of the caller's folder
+LOCKS = None  # the folder of the stones' lock files: main sets it under the repository's common git folder
+LOCK_POLL_SECONDS = 5  # a run holds the lock for minutes, so a waiter checks seldom
+LOCK_FOLDER = "mw-merge-step"
 STEP_BRANCH = re.compile(r"^step/([^/]+)/[^/]+$")
 BRIEF_MARK = re.compile(r"^<!-- mw-step-brief: (\S+) -->$")
 BRIEF_ITEMS = ("- Merged:", "- Rulings:", "- Ambiguities:", "- Deferred:", "- For the owner:")
@@ -116,6 +133,84 @@ def repo_root(cwd=None):
     if proc.returncode != 0:
         raise Stop(2, f"{Path(cwd or '.').resolve()} is in no git repository: {proc.stderr.strip()}")
     return Path(proc.stdout.strip())
+
+
+def lock_folder(root):
+    """The folder of the stones' lock files under root's common git folder, which every worktree of it shares."""
+    proc = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=root, text=True, capture_output=True,
+                          encoding="utf-8", errors="replace")
+    if proc.returncode != 0 or not proc.stdout.strip():
+        raise Stop(2, f"could not find the common git folder of {root}: {proc.stderr.strip()}")
+    return (Path(root) / proc.stdout.strip()).resolve() / LOCK_FOLDER  # git names it relative to root, or absolute
+
+
+def try_lock(fd):
+    """Takes the exclusive lock on the file's first byte without waiting; False while another process holds it."""
+    os.lseek(fd, 0, os.SEEK_SET)  # msvcrt locks from the current position
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True
+
+
+def lock_holder(path):
+    """The details a holder wrote past the locked first byte, which Windows refuses to a reader without the lock;
+    {} when none are written."""
+    try:
+        with open(path, "rb") as file:
+            file.seek(1)
+            return json.loads(file.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def holder_line(holder):
+    return f"#{holder.get('pr', '?')} (pid {holder.get('pid', '?')}) since {holder.get('since', '?')}"
+
+
+@contextlib.contextmanager
+def stone_lock(stone, pr):
+    """Holds the stone's lock for the block, waiting with no cap while another run holds it, and yields True when it
+    waited. The operating system drops the lock when its holder's process ends; a clean release also clears the
+    details, so details found under a free lock name a run that died holding it."""
+    LOCKS.mkdir(parents=True, exist_ok=True)
+    path = LOCKS / (re.sub(r"[^A-Za-z0-9._-]", "_", stone.split("/", 1)[-1]) + ".lock")
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0))
+    try:
+        waited, seen = False, None
+        while not try_lock(fd):
+            holder = lock_holder(path)
+            if holder != seen and (holder or seen is None):
+                print(f"[merge_step] #{pr} waits for the {stone} lock, held by {holder_line(holder)}")
+                sys.stdout.flush()
+                seen = holder
+            waited = True
+            sleep(LOCK_POLL_SECONDS)
+        dead = lock_holder(path)
+        if dead:
+            print(f"[merge_step] the run that held the {stone} lock, {holder_line(dead)}, ended without freeing it; "
+                  f"#{pr} takes it over")
+        details = json.dumps({"pid": os.getpid(), "pr": pr, "stone": stone,
+                              "since": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}).encode("utf-8")
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, b"#" + details)  # the holder may write its own locked byte
+        os.ftruncate(fd, 1 + len(details))
+        try:
+            yield waited
+        finally:
+            os.ftruncate(fd, 1)
+            if os.name == "nt":  # msvcrt's lock would otherwise outlive the close for a while
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    finally:
+        os.close(fd)  # drops flock's lock
 
 
 def gh(args, what):
@@ -324,6 +419,14 @@ def wait_for_ci(pr, head):
         sleep(delay)
 
 
+def read_step(pr):
+    """(the pull request's state, its stone branch), or a Stop for one that is closed, a draft or not a step."""
+    info = gh_json(["pr", "view", str(pr), "--json", "state,isDraft,baseRefName,headRefName,headRefOid"], f"read #{pr}")
+    if info["state"] != "OPEN" or info["isDraft"]:
+        raise Stop(2, f"#{pr} is {'a draft' if info['isDraft'] else info['state'].lower()}")
+    return info, stone_of(info["headRefName"], info["baseRefName"])
+
+
 def merge_step(pr, brief_path):
     try:
         brief = Path(brief_path).read_text(encoding="utf-8")
@@ -332,11 +435,16 @@ def merge_step(pr, brief_path):
     check_brief(brief, pr)
     if gh(["api", "repos/{owner}/{repo}", "--jq", ".delete_branch_on_merge"], "read the repository").strip() != "false":
         raise Stop(2, "the repository deletes head branches on merge, which would close every step stacked on this one")
-    info = gh_json(["pr", "view", str(pr), "--json", "state,isDraft,baseRefName,headRefName,headRefOid"], f"read #{pr}")
-    if info["state"] != "OPEN" or info["isDraft"]:
-        raise Stop(2, f"#{pr} is {'a draft' if info['isDraft'] else info['state'].lower()}")
+    info, stone = read_step(pr)
+    with stone_lock(stone, pr) as waited:
+        if waited:  # the run before may have merged this step, the step below or the stone branch's head
+            info, stone = read_step(pr)
+        merge_locked(pr, brief_path, brief, info, stone)
+
+
+def merge_locked(pr, brief_path, brief, info, stone):
+    """The stone's pull request, then items 2 to 6 of the docstring, under the stone's lock."""
     head, base = info["headRefName"], info["baseRefName"]
-    stone = stone_of(head, base)
     stone_prs = gh_json(["pr", "list", "--base", "main", "--head", stone, "--state", "open", "--json", "number"],
                         f"find the pull request of {stone}")
     if not stone_prs:
@@ -369,9 +477,10 @@ def main(argv=None):
     ap.add_argument("pr", type=int)
     ap.add_argument("--brief", required=True, help="the step's brief, in the form documents/process/agent-rulings.md gives")
     args = ap.parse_args(argv)
-    global ROOT
+    global ROOT, LOCKS
     try:
         ROOT = repo_root()
+        LOCKS = lock_folder(ROOT)
         merge_step(args.pr, args.brief)
     except Stop as stop:
         code, line = stop.args
