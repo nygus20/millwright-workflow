@@ -147,7 +147,7 @@ class Fake:
         self.run_lists, self.base, self.deletes, self.below, self.moved = run_lists, base, deletes, below, moved
         self.jobs = jobs if isinstance(jobs, tuple) else (jobs,)
         self.tree, self.comments, self.bases, self.locked = tree, list(comments), bases, dict(locked or {})
-        self.check_runs = list(check_runs)
+        self.check_runs, self.state = list(check_runs), "OPEN"
 
     def __call__(self, cmd, cwd=None):
         self.calls.append(cmd)
@@ -170,7 +170,7 @@ class Fake:
         if line.startswith("gh api"):
             return self.deletes
         if line.startswith("gh pr view") and "isDraft" in line:
-            return {"state": "OPEN", "isDraft": False, "baseRefName": self.base, "headRefName": "step/12-save/2-y",
+            return {"state": self.state, "isDraft": False, "baseRefName": self.base, "headRefName": "step/12-save/2-y",
                     "headRefOid": "a" * 40}
         if line.startswith("gh pr view") and "comments" in line:
             return {"comments": self.comments}
@@ -209,6 +209,8 @@ def scenario(fake, brief=BRIEF):
         def sleep(seconds):
             fake.sleeps.append(seconds)
             fake.clock += seconds
+            if getattr(fake, "on_sleep", None):
+                fake.on_sleep()
         ms.sleep = sleep
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
@@ -373,6 +375,107 @@ code, merges, said = scenario(fake)
 check("ref lock: a push that clears on the second try pushes again and the step merges",
       (code, sum(c[:2] == ["git", "push"] for c in fake.calls), merges),
       (0, 2, [["gh", "pr", "merge", "42", "--merge", "--match-head-commit", "b" * 40]]))
+
+# The stone's lock (the engine's issue 935): one run per stone at a time, a dead holder taken over, two stones apart.
+GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+       "-c", "init.defaultBranch=main"]
+ms.LOCKS = ms.lock_folder(SCENARIO_REPO)
+STONE = "stone/12-save"
+HOLDER = ("import importlib.util, os, sys\nfrom pathlib import Path\n"
+          "spec = importlib.util.spec_from_file_location('m', sys.argv[1])\nm = importlib.util.module_from_spec(spec)\n"
+          "spec.loader.exec_module(m)\nm.LOCKS = Path(sys.argv[2])\n"
+          "lock = m.stone_lock(sys.argv[3], int(sys.argv[4]))\nlock.__enter__()\nprint('pid', os.getpid(), flush=True)\n"
+          "if sys.argv[5] == 'die':\n    os._exit(0)\nsys.stdin.readline()\nlock.__exit__(None, None, None)\n")
+
+
+def holder(stone, pr, how):
+    """A run in another process that takes the stone's lock and prints its process id; "die" ends it holding the
+    lock, "wait" holds the lock until a line arrives on its stdin, then frees it."""
+    child = subprocess.Popen([sys.executable, "-c", HOLDER, str(PLUGIN / "tools" / "merge_step.py"), str(ms.LOCKS),
+                              stone, str(pr), how], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    line = child.stdout.readline()
+    while line and not line.startswith("pid "):  # a line the lock itself printed
+        line = child.stdout.readline()
+    return child, int(line.split()[1])
+
+
+def acquire(stone, pr, on_sleep=None):
+    """(waited, the pauses, printed) of taking and freeing the stone's lock in this process. Without on_sleep a wait
+    past three pauses stops, so a lock that never frees fails the check instead of hanging the test."""
+    pauses, saved = [], ms.sleep
+
+    def pause(seconds):
+        pauses.append(seconds)
+        if on_sleep:
+            on_sleep()
+        elif len(pauses) > 3:
+            raise ms.Stop(2, "still waiting")
+    ms.sleep = pause
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), ms.stone_lock(stone, pr) as waited:
+            pass
+    except ms.Stop:
+        waited = "stuck"
+    finally:
+        ms.sleep = saved
+    return waited, pauses, out.getvalue()
+
+
+child, pid = holder(STONE, 41, "wait")
+try:
+    waited, pauses, said = acquire(STONE, 42, lambda: (child.stdin.write("\n"), child.stdin.flush(), child.wait()))
+finally:
+    if child.poll() is None:
+        child.kill()
+check("lock: a second run waits for the first in another process, naming it, then takes the lock",
+      (waited, pauses, f"#42 waits for the {STONE} lock, held by #41 (pid {pid}) since " in said, "takes it over" in said),
+      (True, [ms.LOCK_POLL_SECONDS], True, False))
+child, pid = holder(STONE, 40, "die")
+child.wait()
+waited, pauses, said = acquire(STONE, 42)
+check("lock: a run that died holding the lock is taken over at once, with a line naming it",
+      (waited, pauses, f"the run that held the {STONE} lock, #40 (pid {pid}) since " in said and "#42 takes it over" in said),
+      (False, [], True))
+check("lock: a clean release leaves no holder to take over", acquire(STONE, 43), (False, [], ""))
+child, pid = holder(STONE, 41, "wait")
+try:
+    check("lock: a run on another stone does not wait for this stone's holder", acquire("stone/13-other", 44), (False, [], ""))
+finally:
+    child.stdin.write("\n")
+    child.stdin.flush()
+    child.wait()
+
+# The whole command: the lock is taken before the fetch, a waiting run reads the pull request again, and a stop frees it.
+held = ms.stone_lock(STONE, 41)
+with contextlib.redirect_stdout(io.StringIO()):
+    held.__enter__()
+fake = Fake([GREEN], tree="differs")
+seen_at_wait = []
+fake.on_sleep = lambda: seen_at_wait.append(list(fake.calls)) or (held.__exit__(None, None, None) if len(seen_at_wait) == 1 else None)
+code, merges, said = scenario(fake)
+first = seen_at_wait[0]
+check("lock: the command waits for the stone's holder before any fetch, then reads the pull request again and merges",
+      (code, [c[:2] for c in first if c[:2] == ["git", "fetch"]], f"#42 waits for the {STONE} lock, held by #41" in said,
+       sum("isDraft" in " ".join(c) for c in fake.calls), len(merges)), (0, [], True, 2, 1))
+held = ms.stone_lock(STONE, 41)
+with contextlib.redirect_stdout(io.StringIO()):
+    held.__enter__()
+fake = Fake([GREEN], tree="differs")
+fake.on_sleep = lambda: (setattr(fake, "state", "MERGED"), held.__exit__(None, None, None))
+code, merges, said = scenario(fake)
+check("lock: a step the run before merged is refused after the wait, with nothing fetched",
+      (code, merges, [c for c in fake.calls if c[:2] == ["git", "fetch"]], "#42 is merged" in said), (2, [], [], True))
+code, merges, said = scenario(Fake([runs((1, "completed", "failure"))]))
+check("lock: a red run's stop frees the lock", (code, acquire(STONE, 45)), (1, (False, [], "")))
+with tempfile.TemporaryDirectory() as folder:
+    main_checkout, worktree = Path(folder).resolve() / "main", Path(folder).resolve() / "wt"
+    main_checkout.mkdir()
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "root"], ["worktree", "add", "-q", str(worktree)]):
+        subprocess.run(GIT + args, cwd=main_checkout, check=True, capture_output=True)
+    check("lock: every worktree of a repository keys on one folder, under the common git folder",
+          (ms.lock_folder(worktree), ms.lock_folder(main_checkout)),
+          ((main_checkout / ".git" / ms.LOCK_FOLDER).resolve(),) * 2)
 
 # The root is the git top level of the caller's folder, not the tool's checkout. Outside a repository main stops
 # before any gh or git call reaches the fake.
