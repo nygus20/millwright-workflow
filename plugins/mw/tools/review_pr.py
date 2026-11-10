@@ -76,7 +76,12 @@ the prompt as the exit test; the active plan is the one the data file's plan sen
 the roadmap at the reviewed commit. The section starts at the first heading that
 one of the data file's stone headings matches, tried in order with {id} standing
 for the escaped ID, and ends at the next ### or ## heading. The defaults match
-"### Stone 38", "### G21 — <title>" and "### The plan-board stone". For a step
+"### Stone 38", "### G21 — <title>" and "### The plan-board stone". A step cut
+before its stone's first step wrote the stone's entry lacks the section at its
+head, so for a step whose reviewed commit lacks it the tool reads the same plan
+file at `origin/stone/<slug>`, then at the step below's branch for a stacked
+step (fetched first), and the prompt's heading names the ref it came from.
+When none holds it, the tool refuses as before. For a step
 (a pull request into a stone branch, or into a step branch of that stone while
 the step below is open) the body of
 the stone's open pull request to main, which holds the approved plan, is
@@ -394,13 +399,38 @@ def stone_section(stone_id, root):
     if not plan.is_file():
         sys.stderr.write(f"[review_pr] {relative.as_posix()} is absent at the reviewed commit; refusing to review without an exit test\n")
         sys.exit(2)
-    text = plan.read_text(encoding="utf-8")
+    return section_in(plan.read_text(encoding="utf-8"), stone_id)
+
+
+def section_in(text, stone_id):
+    """The stone's section of a phase plan's text, or None when none of the data file's stone headings matches."""
     for heading in DATA["review"]["stone_headings"]:
         pattern = heading.replace("{id}", re.escape(str(stone_id)))
         match = re.search(pattern + r".*?(?=^### |^## |\Z)", text, re.S | re.M)
         if match:
             return match.group(0).strip()
     return None
+
+
+def section_refs(base_ref):
+    """The refs a step's stone section is read from when the reviewed commit lacks it: the stone branch, then the
+    base when it is the step below; none for a pull request into main or any other base."""
+    stone = stone_branch(base_ref)
+    if stone is None:
+        return []
+    return [f"origin/{stone}"] + ([f"origin/{base_ref}"] if base_ref != stone else [])
+
+
+def stone_section_on(stone_id, relative, base_ref):
+    """(section, ref) from the first of section_refs that holds the stone's section in the phase plan at relative,
+    else (None, None). A step cut before the stone's first step wrote the stone's entry lacks it at its head
+    (the engine's documents/gotcha-history.md, 2026-11-09)."""
+    for ref in section_refs(base_ref):
+        shown = run(["git", "show", f"{ref}:{relative.as_posix()}"])
+        section = section_in(shown.stdout, stone_id) if shown.returncode == 0 else None
+        if section is not None:
+            return section, ref
+    return None, None
 
 
 def strip_preamble(review):
@@ -466,11 +496,23 @@ def build_prompt(pr, diff, stone, context_files, root, fix_check=None, turns=FUL
     body = pr.get("body") or "(no body)"
     parts.append(f"# Pull request #{pr['number']}: {pr['title']}\n\nTarget branch: {pr['baseRefName']}\n\n{body}")
     if stone is not None:
-        section = stone_section(stone, root)
+        section, ref = stone_section(stone, root), None
+        relative = phase_plan(root)
         if section is None:
-            sys.stderr.write(f"[review_pr] the stone {stone} has no section in {phase_plan(root).as_posix()}; refusing to review without an exit test\n")
+            section, ref = stone_section_on(stone, relative, pr["baseRefName"])
+        if section is None:
+            refs = section_refs(pr["baseRefName"])
+            tried = f" (nor at {' or '.join(refs)})" if refs else ""
+            sys.stderr.write(f"[review_pr] the stone {stone} has no section in {relative.as_posix()}; "
+                             f"refusing to review without an exit test{tried}\n")
             sys.exit(2)
-        parts.append("# Exit test and bullets\n\n" + section)
+        if ref is None:
+            parts.append("# Exit test and bullets\n\n" + section)
+        else:
+            print(f"[review_pr] note: the reviewed commit's {relative.as_posix()} has no section for the stone {stone}; "
+                  f"the exit test comes from {ref}")
+            parts.append(f"# Exit test and bullets (read from {relative.as_posix()} at {ref}, because the reviewed "
+                         "commit's copy has no section for this stone)\n\n" + section)
     for path in context_files:
         source = Path(path)
         if not source.is_absolute():
@@ -1154,6 +1196,9 @@ def main():
     if base_fetch.returncode != 0:
         sys.stderr.write(base_fetch.stderr)
         return 2
+    stone_ref = stone_branch(pr["baseRefName"])
+    if args.stone is not None and stone_ref not in (None, pr["baseRefName"]):
+        fetch_ref(stone_ref)  # a stacked step's exit test may sit only on the stone branch; a failure leaves the base
     # The kind comes first, from every file of the pull request: a step outside the costly paths gets no
     # review at all, and a step gets one round.
     merge_base = run(["git", "merge-base", base, head])

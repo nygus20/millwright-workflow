@@ -751,6 +751,59 @@ with tempfile.TemporaryDirectory() as scratch:
     check("walk: off the line is a full review", mode, "full")
     check("walk: off the line says why", "first-parent line" in note, True)
 
+# The stone's section when the reviewed commit lacks it (the engine's gotcha of 2026-11-09): a step cut before the
+# stone's first step wrote the entry reads it from origin/stone/<slug>, then from the step below's branch, and the
+# prompt's heading names the ref; the reviewed commit's own section wins, and a pull request into main reads no ref.
+with tempfile.TemporaryDirectory() as scratch:
+    repo, worktree, plan = Path(scratch) / "repo", Path(scratch) / "worktree", "documents/plans/phase-3.md"
+    for folder in (repo, worktree):
+        (folder / "documents" / "plans").mkdir(parents=True)
+        (folder / "ROADMAP.md").write_text(f"Its plan is `{plan}`.\n", encoding="utf-8")
+    (worktree / "CLAUDE.md").write_text("## Load-Bearing Invariants\n1. a rule\n", encoding="utf-8")
+    (worktree / plan).write_text("## Stones\n\n### Stone 40 — T\nforty's test\n## Inbound\n", encoding="utf-8")
+    rp.subprocess.run(GIT + ["init", "-q"], cwd=repo, check=True, capture_output=True)
+    for text, ref in (("### Stone 41 — T\nforty-one's test on the stone\n## Inbound\n", "stone/41-x"),
+                      ("### Stone 41 — T\nforty-one's test below\n", "step/41-x/1-a"),
+                      ("### Stone 40 — T\nforty's test on the stone\n", "stone/40-x"),
+                      ("### Stone 42 — T\nonly the step below\n", "step/42-x/1-a")):
+        (repo / plan).write_text(text, encoding="utf-8")
+        for args in (["add", "-A"], ["commit", "-q", "-m", ref], ["update-ref", f"refs/remotes/origin/{ref}", "HEAD"]):
+            rp.subprocess.run(GIT + args, cwd=repo, check=True, capture_output=True)
+    saved_root, rp.ROOT = rp.ROOT, repo
+    try:
+        with contextlib.redirect_stdout(io.StringIO()) as noted:
+            on_stone = rp.build_prompt({**PROMPT_PR, "baseRefName": "stone/41-x"}, "d", "41", [], worktree)
+            stacked = rp.build_prompt({**PROMPT_PR, "baseRefName": "step/41-x/1-a"}, "d", "41", [], worktree)
+            below = rp.build_prompt({**PROMPT_PR, "baseRefName": "step/42-x/1-a"}, "d", "42", [], worktree)
+            own = rp.build_prompt({**PROMPT_PR, "baseRefName": "stone/40-x"}, "d", "40", [], worktree)
+        check("stones: a head without the section reads it from the stone branch, and the heading names the ref",
+              ("forty-one's test on the stone" in on_stone,
+               f"# Exit test and bullets (read from {plan} at origin/stone/41-x, because" in on_stone,
+               f"the exit test comes from origin/stone/41-x" in noted.getvalue()), (True, True, True))
+        check("stones: a stacked step reads the stone branch before the step below",
+              ("forty-one's test on the stone" in stacked, "forty-one's test below" in stacked), (True, False))
+        check("stones: the step below's branch serves when the stone branch lacks the section",
+              ("only the step below" in below, "at origin/step/42-x/1-a, because" in below), (True, True))
+        check("stones: the reviewed commit's own section wins, under the plain heading",
+              ("forty's test on the stone" in own, "# Exit test and bullets\n\n### Stone 40 — T\nforty's test" in own),
+              (False, True))
+        check("stones: the fallback's prompt asks for no non-blocking finding", "non-blocking" in on_stone.lower(), False)
+        check("stones: a pull request into main reads no other ref", rp.section_refs("main"), [])
+        check("stones: a pull request into main whose head lacks the section exits 2, the stone branch unread",
+              exits_2({**PROMPT_PR, "baseRefName": "main"}, "d", "41", [], worktree), True)
+        refusal = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(refusal):
+                rp.build_prompt({**PROMPT_PR, "baseRefName": "step/43-x/1-a"}, "d", "43", [], worktree)
+            stopped = None
+        except SystemExit as stop:
+            stopped = stop.code
+        check("stones: no ref holds the section: exit 2 as before, naming the refs tried",
+              (stopped, f"has no section in {plan}; refusing to review without an exit test (nor at origin/stone/43-x or "
+                        "origin/step/43-x/1-a)" in refusal.getvalue()), (2, True))
+    finally:
+        rp.ROOT = saved_root
+
 # A second repository's data file: the tool reads its root from the caller's folder and its lists from that root's
 # .claude/mw.json, not from this repository's.
 OTHER = {"version": 1, "repository": "Second Repo", "worktrees": "c:/w", "guard": {"files": ["a"], "folders": ["b/"]},
@@ -963,16 +1016,21 @@ def streamed(stream):
     return stream.buffer.getvalue().decode("utf-8")
 
 
-def main_run(argv, max_slices, wait=None):
+FETCHED = []  # the refs main_run's stub of fetch_ref was asked for
+
+
+def main_run(argv, max_slices, wait=None, base="main"):
     """(exit code, stdout, stderr, git calls) of main up to the review worktree, which a stub refuses.
 
-    The pull request is into main, so it is a stone review with no earlier comment; the diff is PLANTED. CI's
-    wait runs through the scripted clock of the CI checks above unless wait replaces wait_for_ci.
+    The pull request is into base, main by default, so it is a stone review with no earlier comment; the diff is
+    PLANTED. CI's wait runs through the scripted clock of the CI checks above unless wait replaces wait_for_ci.
+    FETCHED collects the refs main fetched.
     """
     data = json.loads(json.dumps(ENGINE_DATA))
     data["review"]["max_slices"] = max_slices
     clock, gits = [1000.0], []
-    pr_view = {"number": 83, "title": "t", "body": "b", "baseRefName": "main", "headRefName": "stone/x", "headRefOid": HEAD}
+    FETCHED.clear()
+    pr_view = {"number": 83, "title": "t", "body": "b", "baseRefName": base, "headRefName": "stone/x", "headRefOid": HEAD}
 
     def git_run(cmd, **kw):
         gits.append(cmd)
@@ -986,7 +1044,8 @@ def main_run(argv, max_slices, wait=None):
              rp.now, rp.wait_for_ci, rp.ROOT, rp.DATA)
     sys.argv = ["review_pr.py"] + argv
     rp.repo_root, rp.mw_data.load_or_exit = (lambda: PLUGIN), (lambda root: data)
-    rp.gh_json, rp.fetch_ref, rp.run = (lambda args: pr_view), (lambda ref: rp.subprocess.CompletedProcess([], 0, "", "")), git_run
+    rp.gh_json, rp.run = (lambda args: pr_view), git_run
+    rp.fetch_ref = lambda ref: FETCHED.append(ref) or rp.subprocess.CompletedProcess([], 0, "", "")
     rp.list_comments, rp.now = (lambda number: []), (lambda: clock[0])
     rp.sleep = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
     rp.wait_for_ci = wait or rp.wait_for_ci
@@ -1016,6 +1075,13 @@ check("size: the refusal names the size, the count and the key",
 check("size: no worktree is made after the refusal", any("worktree" in cmd for cmd in gits), False)
 check("size: --slice-bytes parses", parse(["83", "--slice-bytes", "500000"]).slice_bytes, 500000)
 check("size: --slice-bytes 0 refuses", rp.flag_error(parse(["83", "--slice-bytes", "0"])) is not None, True)
+main_run(["83", "--stone", "41"], 8, base="step/41-x/1-a")
+check("stones: a stacked step's run with --stone fetches the stone branch after the base",
+      FETCHED, ["pull/83/head", "step/41-x/1-a", "stone/41-x"])
+for argv, base in ((["83"], "step/41-x/1-a"), (["83", "--stone", "41"], "stone/41-x")):
+    main_run(argv, 8, base=base)
+    check(f"stones: {' '.join(argv)} into {base} fetches no stone branch beside the base", FETCHED,
+          ["pull/83/head", base])
 
 # review_in over a sliced round: every slice runs at once in its own worktree; a slice that fails once runs
 # again, and one that fails twice exits 2 with nothing posted.
