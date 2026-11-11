@@ -274,11 +274,12 @@ check("wait: the waiting line prints once", sum("waiting for CI" in line for lin
 result, listed, pauses, said = waited([[CI_OLDER], [CI_COMMENT]], 0)
 check("wait: limit 0 lists once with no pause", (result, listed, pauses), (None, 1, []))
 check("wait: limit 0 never says it waits", any("waiting for CI" in line for line in said), False)
-check("wait: the default limit is the merge tool's queued limit", (rp.CI_WAIT_SECONDS, rp.CI_POLL_SECONDS), (600, 20))
+check("wait: the default limit covers a queued run and a whole checks job", (rp.CI_WAIT_SECONDS, rp.CI_POLL_SECONDS),
+      (1800, 20))
 check("--no-wait-ci parses", rp.arg_parser().parse_args(["83", "--no-wait-ci"]).no_wait_ci, True)
 check("no --no-wait-ci by default", rp.arg_parser().parse_args(["83"]).no_wait_ci, False)
 check("the limit under --no-wait-ci is 0", rp.ci_limit(rp.arg_parser().parse_args(["83", "--no-wait-ci"])), 0)
-check("the limit without it is ten minutes", rp.ci_limit(rp.arg_parser().parse_args(["83"])), 600)
+check("the limit without it is thirty minutes", rp.ci_limit(rp.arg_parser().parse_args(["83"])), 1800)
 
 # list_comments flattens the pages --slurp returns; a failed listing or a reply that is not JSON exits 2.
 # find_review_comment reads that list: the review starts with its marker, and a reply quoting it does not.

@@ -103,7 +103,7 @@ worktree, so its own system prompt carries that repository's CLAUDE.md.
 
 CI's result. Once the round is planned and before the reviewer starts, the
 tool lists the pull request's comments for CI's `mw-tests` comment on the head
-commit, every CI_POLL_SECONDS for up to CI_WAIT_SECONDS, ten minutes, and
+commit, every CI_POLL_SECONDS for up to CI_WAIT_SECONDS, thirty minutes, and
 prints the run it read or that it starts without one; --no-wait-ci lists once.
 The prompt carries the comment's body under "CI's suite result on <head7>", or
 a sentence saying CI has not posted it yet. Both prompts forbid a full suite
@@ -223,7 +223,10 @@ GIT_LOCK_SECONDS = (2, 5)  # the pauses before the second and the third try: ano
 # merge_step.py holds the same two, and the workflow's comment step writes them; the two tools import neither.
 TESTS_MARK = "<!-- mw-tests -->"
 TESTS_LINE = re.compile(r"^Commit ([0-9a-f]{8}), \[run (\d+)\]", re.M)
-CI_WAIT_SECONDS = 600  # merge_step.py's queued limit: CI's run takes about four minutes once a runner has it
+# CI's run is a step's one full gate, and the reviewer reads its result in place of a suite run, so the wait covers
+# a whole run: up to merge_step.py's ten minutes in the queue, then the game's checks job, 15.2 to 16.5 minutes at
+# the median on the laptop runner (the engine's documents/findings/gate-cost-2026-11-10.md), with room to spare.
+CI_WAIT_SECONDS = 1800
 CI_POLL_SECONDS = 20
 sleep = time.sleep  # the CI wait's clock and pause, replaced by its tests
 now = time.time
@@ -1270,7 +1273,7 @@ def main():
     print(f"[review_pr] #{args.pr} round {number}, {mode}, {kind} review, model {profile[1]}, effort {profile[2]}, {turns} turns")
     if note:
         print(f"[review_pr] note: {note}")
-    # The size check comes before the CI wait, so a diff past review.max_slices costs no ten minutes (engine issue 906).
+    # The size check comes before the CI wait, so a diff past review.max_slices costs no CI wait (engine issue 906).
     budget = args.slice_bytes or DATA["review"]["slice_bytes"]
     slices = plan_slices(args.pr, diff_text, budget, ranges)
     if slices is None:
