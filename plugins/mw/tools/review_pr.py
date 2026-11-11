@@ -34,7 +34,18 @@ touches a costly path gets one round, and only the owner grants it
 another, with --extra-round owner. A step that touches none gets no review:
 the tool prints so and exits 0, unless --force-review, the owner's call, asks
 for one. A pull request into main, the stone review, keeps the rounds below.
-The reviewer reports blocking findings only.
+The reviewer reports blocking findings and unresearched choices.
+
+The rule per kind of round, ruled by the owner 2026-11-10. A step round is a
+round on a pull request into a stone or a step branch, costly or forced; a
+stone round is one on a pull request into main, its fix checks included. A
+stone round keeps the blocking rule and the three headings it had. A step
+round blocks on a narrower rule, and its reply carries a fourth heading,
+Records, for a finding about the records: a contradiction between two docs, a
+false statement in a doc, a wrong citation, a missing heading or path a doc
+names, a comment's wording. The exit code and the comment's blocking count
+read only the Blocking heading, so a Records bullet never sets exit 1; the
+comment shows the bullets, and the stone's closing step fixes them together.
 
 Rounds. The posted comment records the reviewed commit and the round number.
 The next run reads them back: when new commits sit on top of the reviewed one,
@@ -95,7 +106,7 @@ missing invariants file at the reviewed commit each print a named message and ex
 
 Foreground. Both prompts tell the reviewer to run every command in the
 foreground with a timeout and never end its turn to wait for a task. A reply
-without the three headings whose last paragraph announces such a wait exits 2
+without its round's headings whose last paragraph announces such a wait exits 2
 with a line saying so; a well-formed review whose last paragraph does is posted,
 with a printed warning that its Verified section may rest on a run nobody read. The invariant list comes
 from the data file's invariants heading. The reviewer starts in the reviewed
@@ -122,9 +133,9 @@ file's review.max_slices, 8 by default, exits 2 at once. A diff within the
 budget is one slice, and its prompt and comment are those of an unsliced round.
 Each slice of a larger one gets its own reviewer in its own detached worktree,
 all at once, with the same model, effort and turns. A slice whose reviewer
-fails or answers without the three headings runs once more; a second failure
+fails or answers without its round's headings runs once more; a second failure
 exits 2 and posts nothing. The slices' reviews merge into one review under the
-three headings, and the comment names each slice's paths; its marks and its
+round's headings, and the comment names each slice's paths; its marks and its
 round are those of an unsliced round. A fix check's diff slices by the same rule.
 
 From the plugin. The plugin's copy of this tool sets FROM_PLUGIN, and then the
@@ -239,28 +250,57 @@ BLOCKING_RULE = """What blocks. A finding goes under Blocking only if it shows o
 - a tool can lose data or leak a secret.
 A gap in a later stone's plan never blocks, because every stone is replanned from scratch when it starts. Being cheap to fix does not make a finding blocking. Report nothing else: leave out every finding that does not meet this rule, a gap in a later stone's plan included."""
 
-OUTPUT_FORMAT = """Write the result as Markdown with exactly these three headings, in this order:
+# A step round's rule, ruled by the owner 2026-11-10: prose and records findings move off the blocking rule to a
+# Records heading, which stops no merge; the stone's closing step fixes the bullets together. A stone round keeps
+# BLOCKING_RULE as it stands.
+STEP_BLOCKING_RULE = """What blocks. A finding goes under Blocking only if it shows one of these:
+- the step's own claim or the stone's exit test is not met, a claim of verification that no test carries included;
+- a repository invariant is broken;
+- a path or a command that a tool, a skill or a rule file names does not exist;
+- a tool can lose data or leak a secret.
+What goes under Records. A finding that shows one of these goes under Records, never under Blocking:
+- two docs contradict each other;
+- a doc states something false;
+- a citation is wrong;
+- a heading or a path that a doc names does not exist;
+- a comment is worded wrongly.
+A finding that fits both lists goes under Blocking. A Records bullet stops no merge: the stone's closing step fixes every Records bullet together. Code that later departs from a closed stone's dated record is no finding, because that record states what held on its date. A gap in a later stone's plan never blocks, because every stone is replanned from scratch when it starts. Being cheap to fix does not make a finding blocking. Report nothing else: leave out every finding that meets neither list, a gap in a later stone's plan included."""
 
-## Blocking
-One bullet per finding that meets the rule above. Each bullet starts with `path:line` where it applies, then one sentence stating the defect and one sentence stating the concrete failure. Write `- none` if there is none.
+BLOCKING_SECTION = """## Blocking
+One bullet per finding that meets the rule above. Each bullet starts with `path:line` where it applies, then one sentence stating the defect and one sentence stating the concrete failure. Write `- none` if there is none."""
+UNRESEARCHED_SECTION = """## Unresearched choices
+One bullet per hard-to-reverse design choice that check 7 finds, and per ported part with no row that check 8 finds, same format. `- none` if none. Nothing else goes here."""
+RECORDS_SECTION = """## Records
+One bullet per finding that the rule above sends to Records, same format. `- none` if none. Nothing else goes here."""
+VERIFIED_SECTION = """## Verified
+At most five bullets, each a claim you checked and found true, with how you checked it."""
+FORMAT_CLOSE = "Be specific and terse. No preamble, no summary paragraph, no praise.\n"
 
-## Unresearched choices
-One bullet per hard-to-reverse design choice that check 7 finds, and per ported part with no row that check 8 finds, same format. `- none` if none. Nothing else goes here.
 
-## Verified
-At most five bullets, each a claim you checked and found true, with how you checked it.
+def output_format(sections):
+    """The prompt's output format over the round's sections, each a heading with what goes under it."""
+    count = {3: "three", 4: "four"}[len(sections)]
+    return (f"Write the result as Markdown with exactly these {count} headings, in this order:\n\n"
+            + "\n\n".join(sections) + "\n\n" + FORMAT_CLOSE)
 
-Be specific and terse. No preamble, no summary paragraph, no praise.
-"""
 
+OUTPUT_FORMAT = output_format((BLOCKING_SECTION, UNRESEARCHED_SECTION, VERIFIED_SECTION))  # a stone round's
+STEP_OUTPUT_FORMAT = output_format((BLOCKING_SECTION, UNRESEARCHED_SECTION, RECORDS_SECTION, VERIFIED_SECTION))
+STONE_HEADINGS = ("Blocking", "Unresearched choices", "Verified")
+STEP_HEADINGS = ("Blocking", "Unresearched choices", "Records", "Verified")
+# Check 6 on a step round: its document findings go under Records, except a path or a command the blocking rule names.
+STEP_CHECK_6 = (" On this round each of these goes under Records, except a path or a command that a tool, a skill or a "
+                "rule file names, which blocks.")
+
+# The two prompts' text around the rule and the format, which instructions() fills per kind of round.
 FIX_CHECK_INSTRUCTIONS = f"""You are checking the fixes to one pull request in the <repository> repository. An earlier review of this pull request is below, and the diff below holds only the commits made since that review. Do two things:
 1. For each finding under the earlier review's Blocking heading, decide whether the new commits fix it. An unfixed one goes under Blocking again.
 2. Check the new commits for anything they break.
 Do not review code the new commits leave untouched; the earlier round did that. You did not write the fixes and must not assume they work: read the repository at the pull request head and CI's suite result below, and compile a Python tool with `python -m py_compile` when a fix touches one. {SUITE_RULE} {FOREGROUND} Do not comment on style; the lint owns that.
 
-{BLOCKING_RULE}
+<blocking rule>
 
-{OUTPUT_FORMAT}
+<output format>
 Under Verified, give one bullet per earlier blocking finding that is fixed, with how you checked it."""
 
 INSTRUCTIONS = """You are reviewing one pull request in the <repository> repository. Your job is to refute it: find every way the change fails its exit test, breaks a repository rule, or would misbehave. You did not write this code and you must not assume it works. Verify claims by reading the repository, by reading CI's suite result below when the change touches C++, and by compiling a Python tool with `python -m py_compile` when the change touches one. """ + SUITE_RULE + " " + FOREGROUND + """ Do not comment on style; the lint owns that.
@@ -271,11 +311,13 @@ Check, in this order:
 3. Determinism risks: wall-clock reads, platform randomness, hash-map iteration, float contraction, iteration-order dependence.
 4. Allocation inside the tick, pointers to pooled entities, missing module headers.
 5. Missing or weak tests: an assertion the exit test implies that no test makes.
-6. For documents: a stated fact that is false or contradicts another tracked doc, a heading that does not exist, and a path that does not exist<path sources>, and every tracked .md for prose rules.
+6. For documents: a stated fact that is false or contradicts another tracked doc, a heading that does not exist, and a path that does not exist<path sources>, and every tracked .md for prose rules.<check 6 tail>
 7. Did this step make a hard-to-reverse design choice (a data layout, a file format, a public interface, a memory-ownership rule) that neither the stone's plan (below, when a stone pull request is open) nor a findings doc researched? A yes goes under Unresearched choices; a choice that breaks a repository invariant blocks under the rule below.
 8. Ported parts. When the stone's plan names a port-triage record under documents/findings/, measure code that rebuilds a part of the reference game's subsystem against that part's row in the record, never against the reference game: the rows the pull request body cites, and any other row the code rebuilds. Code that departs from its row's engine answer fails the step's own claim and goes under Blocking. A part the code rebuilds that has no row in the record goes under Unresearched choices.
 
-""" + BLOCKING_RULE + "\n\n" + OUTPUT_FORMAT
+<blocking rule>
+
+<output format>"""
 
 # Read-and-verify only. The reviewer may inspect history, build, run the suite
 # filtered to named test files, and run the tools scripts; it may not merge,
@@ -327,12 +369,32 @@ def repo_root(cwd=None):
     return Path(proc.stdout.strip())
 
 
-def instructions(fix_check):
-    """The prompt's opening for this repository: its name, and the files whose paths the invariant test checks."""
+def is_step_round(base_ref):
+    """True for a round on a pull request into a stone or a step branch, False for a stone round, into main."""
+    return base_ref != "main"
+
+
+def headings(step_round):
+    """The headings a reply carries: a step round's four, or a stone round's three."""
+    return STEP_HEADINGS if step_round else STONE_HEADINGS
+
+
+def instructions(fix_check, step_round=False):
+    """The prompt's opening for this repository and this kind of round.
+
+    It fills the repository's name, the files whose paths the invariant test checks, and the round's blocking
+    rule and output format: a stone round's are BLOCKING_RULE and OUTPUT_FORMAT, word for word as before the
+    step rule; a step round's are STEP_BLOCKING_RULE and STEP_OUTPUT_FORMAT, and check 6 sends its findings to
+    Records.
+    """
     sources = DATA["review"]["path_sources"]
     named = ", ".join(sources[:-1]) + " and " + sources[-1] if len(sources) > 1 else "".join(sources)
     where = f" in any doc other than {named}. The invariant test checks those for paths" if sources else ""
     text = FIX_CHECK_INSTRUCTIONS if fix_check else INSTRUCTIONS
+    rule, form, tail = (STEP_BLOCKING_RULE, STEP_OUTPUT_FORMAT, STEP_CHECK_6) if step_round else \
+        (BLOCKING_RULE, OUTPUT_FORMAT, "")
+    # The round's slots fill first, so text from the data file never meets a slot it would fill.
+    text = text.replace("<check 6 tail>", tail).replace("<blocking rule>", rule).replace("<output format>", form)
     return text.replace("<repository>", DATA["repository"]).replace("<path sources>", where)
 
 
@@ -493,9 +555,11 @@ def build_prompt(pr, diff, stone, context_files, root, fix_check=None, turns=FUL
     of the base; commits names the ranges the diff covers. ci is CI's suite result for the head, as
     ci_result returns it, or None when CI has not posted it; the section sits after the invariants.
     sliced is (slices, index) for one slice of a sliced round, whose section sits just before the diff;
-    diff is then that slice's text. None, for a round of one slice, adds nothing.
+    diff is then that slice's text. None, for a round of one slice, adds nothing. The pull request's base sets
+    the kind of round, and with it the blocking rule and the headings.
     """
-    parts = [instructions(fix_check), turn_budget(turns)]
+    step_round = is_step_round(pr["baseRefName"])
+    parts = [instructions(fix_check, step_round), turn_budget(turns, step_round)]
     body = pr.get("body") or "(no body)"
     parts.append(f"# Pull request #{pr['number']}: {pr['title']}\n\nTarget branch: {pr['baseRefName']}\n\n{body}")
     if stone is not None:
@@ -549,11 +613,16 @@ def build_prompt(pr, diff, stone, context_files, root, fix_check=None, turns=FUL
     return "\n\n".join(parts)
 
 
-def turn_budget(turns):
+def heading_count(step_round):
+    """The round's heading count in words, as the prompt and the tool's messages say it."""
+    return "four" if step_round else "three"
+
+
+def turn_budget(turns, step_round=False):
     """The budget section: the session ends without output at the limit, so the result must come first."""
     return (
         f"# Your budget\n\nYou have {turns} turns, and the session ends without output when they run out. "
-        "Batch independent reads into one turn. Write the three headings no later than "
+        f"Batch independent reads into one turn. Write the {heading_count(step_round)} headings no later than "
         f"turn {max(1, turns - 5)}, with what you have verified by then."
     )
 
@@ -591,7 +660,7 @@ def vendored_summary(name_status):
 
 def review_kind(base_ref, paths):
     """stone for a pull request into main, costly when a path matches the data file's costly paths, step otherwise."""
-    if base_ref == "main":
+    if not is_step_round(base_ref):
         return "stone"
     if any(re.match(row["pattern"], p) for p in paths for row in DATA["review"]["costly_paths"]):
         return "costly"
@@ -645,7 +714,7 @@ def parse_marks(body):
 
 
 def earlier_findings(body):
-    """The earlier comment's three sections, without the markers and the footer."""
+    """The earlier comment's sections, from Blocking on, without the markers and the footer."""
     start = body.find("## Blocking")
     text = body[start:] if start >= 0 else body
     lines = [line for line in text.splitlines() if not line.startswith("<!--") and not TOOL_LINE.match(line)]
@@ -863,20 +932,26 @@ def slices_section(slices, index, fix_check):
     return "\n".join(lines)
 
 
-SECTION = re.compile(r"^## (Blocking|Unresearched choices|Verified)\s*$", re.M)
 NONE_LINE = ("- none", "* none", "none")
 
 
-def merge_slices(reviews):
-    """The slices' reviews as one review with one set of the three headings, bullets in slice order.
+def section_mark(step_round):
+    """The pattern of a heading the round's reply carries: Records only on a step round."""
+    return re.compile(r"^## (" + "|".join(re.escape(name) for name in headings(step_round)) + r")\s*$", re.M)
+
+
+def merge_slices(reviews, step_round=False):
+    """The slices' reviews as one review with one set of the round's headings, bullets in slice order.
 
     A section that holds only `- none` adds nothing; `- none` stays only when every slice wrote it. A
     section a slice left empty adds nothing either, so a merged Blocking with nothing in it still blocks.
+    A step round's Records bullets merge under one Records heading, as the other sections' do.
     """
-    merged = {name: [] for name in ("Blocking", "Unresearched choices", "Verified")}
+    merged = {name: [] for name in headings(step_round)}
     wrote_none = {name: 0 for name in merged}
+    mark_of = section_mark(step_round)
     for review in reviews:
-        marks = list(SECTION.finditer(review))
+        marks = list(mark_of.finditer(review))
         for mark, after in zip(marks, marks[1:] + [None]):
             text = review[mark.end():after.start() if after else len(review)].strip()
             lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -971,13 +1046,21 @@ def comment_body(review, blocking, pr, number, mode, note, profile, commits, ear
     return "\n".join(lines)
 
 
-def well_formed(review):
-    """True when the review carries all three headings; one cut off after Blocking lacks the last two."""
-    return all(re.search(rf"^## {name}\s*$", review, re.M) for name in ("Blocking", "Unresearched choices", "Verified"))
+def well_formed(review, step_round=False):
+    """True when the review carries every heading of its round and no other round's; one cut off after Blocking
+    lacks the rest.
+
+    A stone round's reply that carries a Records heading is refused: its rule has no Records, so a finding
+    filed there would escape the blocking count, and the round reruns instead.
+    """
+    def has(name):
+        return re.search(rf"^## {re.escape(name)}\s*$", review, re.M) is not None
+    wanted = headings(step_round)
+    return all(has(name) for name in wanted) and not any(has(name) for name in STEP_HEADINGS if name not in wanted)
 
 
 def blocking_count(review):
-    """Anything in the Blocking section other than exactly `- none` blocks."""
+    """Anything in the Blocking section other than exactly `- none` blocks; a step round's Records never counts."""
     match = re.search(r"^## Blocking\s*\n(.*?)(?=^## |\Z)", review, re.S | re.M)
     if not match:
         return 1  # a malformed review blocks until a human reads it
@@ -1336,25 +1419,32 @@ def run_reviewer(cmd, env, prompt, worktree):
     )
 
 
-def review_slice(index, count, prompt, worktree, cmd, env):
+def malformed_reason(step_round):
+    """The words for a reply that well_formed refuses."""
+    if step_round:
+        return f"its reply lacks one of the {heading_count(True)} headings"
+    return f"its reply lacks one of the {heading_count(False)} headings, or carries a Records heading"
+
+
+def review_slice(index, count, prompt, worktree, cmd, env, step_round=False):
     """(review, None) for one slice of a sliced round, or (None, the last lines) after its second failure.
 
-    A failed process or a reply without the three headings runs once more: a sliced round loses every
+    A failed process or a reply without the round's headings runs once more: a sliced round loses every
     slice's review when one slice fails, and several reviewers at once may meet the account's limits.
     """
     for attempt in (1, 2):
         proc = run_reviewer(cmd, env, prompt, worktree)
         review = strip_preamble(proc.stdout.strip()) if proc.returncode == 0 else ""
-        if review and well_formed(review):
+        if review and well_formed(review, step_round):
             return review, None
-        why = f"claude exited {proc.returncode}" if proc.returncode != 0 else "its reply lacks one of the three headings"
+        why = f"claude exited {proc.returncode}" if proc.returncode != 0 else malformed_reason(step_round)
         if attempt == 1:
             sys.stderr.write(f"[review_pr] slice {index + 1} of {count}: {why}; running it once more\n")
     tail = "\n".join((proc.stdout.strip() or proc.stderr.strip()).splitlines()[-20:])
     return None, f"{why}; the last lines of the reviewer's output:\n{tail}"
 
 
-def review_slices(worktree, prompts, pr, cmd, env):
+def review_slices(worktree, prompts, pr, cmd, env, step_round=False):
     """The merged review of a sliced round, or None after naming each slice that failed twice.
 
     Slice 1 runs in worktree; each other slice gets a detached worktree of its own at the head, made
@@ -1368,7 +1458,8 @@ def review_slices(worktree, prompts, pr, cmd, env):
                 return None
             trees.append(tree)
         with ThreadPoolExecutor(max_workers=len(prompts)) as pool:
-            results = list(pool.map(lambda index: review_slice(index, len(prompts), prompts[index], trees[index], cmd, env),
+            results = list(pool.map(lambda index: review_slice(index, len(prompts), prompts[index], trees[index], cmd, env,
+                                                               step_round),
                                     range(len(prompts))))
     finally:
         for tree in trees[1:]:
@@ -1383,15 +1474,16 @@ def review_slices(worktree, prompts, pr, cmd, env):
         if announces_wait(review):
             sys.stderr.write(f"[review_pr] warning: slice {index}'s review ends by announcing a wait on a task it "
                              "started; its Verified section may rest on a run nobody read\n")
-    return merge_slices([review for review, _ in results])
+    return merge_slices([review for review, _ in results], step_round)
 
 
 def review_in(worktree, prompts, pr, args, review_round, sliced=None):
     """Run the round's reviewer, or one per slice when sliced is (budget, slices), and post or print the comment."""
     profile, turns = review_round[3], review_round[4]
+    step_round = profile[0] != "stone"  # the kind review_kind gave, from the same base as the prompt's rule
     cmd, env = reviewer_call(profile, turns)
     if sliced is not None:
-        review = review_slices(worktree, prompts, pr, cmd, env)
+        review = review_slices(worktree, prompts, pr, cmd, env, step_round)
         if review is None:
             return 2
         return finish_review(review, pr, args, review_round, sliced)
@@ -1405,15 +1497,16 @@ def review_in(worktree, prompts, pr, args, review_round, sliced=None):
         sys.stderr.write(f"\n[review_pr] claude exited {proc.returncode}\n")
         return 2
     review = strip_preamble(proc.stdout.strip())
-    if not well_formed(review) and announces_wait(review):
+    if not well_formed(review, step_round) and announces_wait(review):
         print(review)
         sys.stderr.write(f"[review_pr] the reviewer on #{args.pr} ended its turn waiting on a task it started, which its prompt "
                          "forbids (run every command in the foreground); nothing posted, rerun the same round\n")
         return 2
-    if not well_formed(review):
+    if not well_formed(review, step_round):
         # Off format or cut short: a tool error, so the round is not spent and nothing is posted.
         print(review)
-        sys.stderr.write(f"[review_pr] the reviewer's output on #{args.pr} lacks one of the three headings; nothing posted, rerun the same round\n")
+        sys.stderr.write(f"[review_pr] the reviewer's output on #{args.pr}: {malformed_reason(step_round)}; "
+                         "nothing posted, rerun the same round\n")
         return 2
     if announces_wait(review):
         sys.stderr.write(f"[review_pr] warning: the review on #{args.pr} ends by announcing a wait on a task it started; "
