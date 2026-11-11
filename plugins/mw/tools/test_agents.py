@@ -7,7 +7,8 @@ PROJECT is accepted as tools/run_checks.py passes it, and unused: every check
 reads the plugin's own files. The checks: the definition's frontmatter fences
 parse; `name`, `model` and `effort` hold their fixed values; no field Claude Code
 ignores for a plugin agent, and no `tools` line, is present; the body names each
-standing item of the brief; the coordinate-stone skill starts `mw:step-builder`,
+standing item of the brief, and no full local suite run, because CI's run is a
+step's one gate; the coordinate-stone skill starts `mw:step-builder`,
 and the sentence of that call says it passes no `model`; no skill, agent or hook
 names a concrete worktree folder, which only the data file's `worktrees` key holds;
 the start-stone, close-stone and coordinate-stone skills hold the clauses each
@@ -33,9 +34,14 @@ FIXED = {"name": "step-builder", "model": "claude-opus-5-5", "effort": "high"}
 IGNORED = ("hooks", "mcpServers", "permissionMode", "initialPrompt")
 STANDING = {"the rule files": ".claude/rules/", "the worktree line": "`git worktree add` line",
             "the plan citation": "never a plan", "the refusal test": "fails when the refusal breaks",
-            "the scratchpad name": "carries the step's number in its name", "the suite": "`run-tests`",
-            "the lint": "`lint` skills", "the base": "against the base the brief names",
+            "the scratchpad name": "carries the step's number in its name", "the quick check": "`quick_check.bat`",
+            "CI's run": "CI's run on the pull request's head is the step's one full gate",
+            "the background wait": "`gh pr checks <pr> --watch", "the base": "against the base the brief names",
             "no draft": "never as a draft", "the report": "200 words"}
+# CI's run is a step's one full gate (the engine's issue 942), so the body names
+# no full local suite run: the coordinator's brief names one for a step that changes a file CI does not build.
+UNFILTERED = {"an unfiltered run": "unfiltered", "the suite wrapper": "run_tests.bat",
+              "the lint skill": "`lint` skill", "the suite before the push": "suite and lint"}
 CALL = "`mw:step-builder`"
 # The clauses each stone skill holds: the plan's hand-overs (engine issue 831), the stone registry (engine
 # issue 877), where a gotcha lands since the engine's AGENTS.md retired its gotcha section, and the worktree.
@@ -78,6 +84,7 @@ def problems(agent, coordinate, others):
     found += [f"the ignored field {key} is present" for key in IGNORED if key in fields]
     found += ["a tools line narrows the inherited tools"] if "tools" in fields else []
     found += [f"the body does not name {what}" for what, text in STANDING.items() if text not in body]
+    found += [f"the body names {what}" for what, text in UNFILTERED.items() if text in body]
     calls = [s for s in re.split(r"(?<=\.)\s", coordinate) if CALL in s and "Agent tool" in s]
     if not calls:
         found.append("the coordinate-stone skill does not start mw:step-builder through the Agent tool")
@@ -150,6 +157,9 @@ check("the placeholder, the key, git's folder and another absolute path pass",
 for what, text in STANDING.items():
     check(f"planted, the body without {what}", f"the body does not name {what}" in problems(
         agent_text.replace(text, ""), coordinate_text, {}), True)
+for what, text in UNFILTERED.items():
+    check(f"planted, the body with {what}",
+          problems(agent_text + f"\nRun the {text} before the push.\n", coordinate_text, {}), [f"the body names {what}"])
 
 skills = {path.parent.name: path.read_text(encoding="utf-8") for path in sorted((PLUGIN / "skills").glob("*/SKILL.md"))}
 check("the stone skills hold their clauses", clause_problems(skills), [])
