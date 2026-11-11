@@ -33,7 +33,7 @@ VERSION = 1
 
 # The review section's defaults: the values a repository with the engine's layout would write.
 REVIEW_DEFAULTS = {
-    "profiles": {"stone": ["claude-fable-5-1", "high"], "costly": ["claude-fable-5-1", "high"],
+    "profiles": {"stone": ["claude-fable-5-2", "high"], "costly": ["claude-fable-5-2", "high"],
                  "step": ["claude-opus-5-5", "high"]},
     "allowed_tools": [],
     "roadmap": "ROADMAP.md",
