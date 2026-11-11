@@ -36,6 +36,8 @@ One section per question. At a stone start the sections go into the plan text th
 
 When a phase plan is being written, the sections land in the findings doc of the step that writes the plan, and the plan cites them. In every case the plan says which choice each answer settles.
 
+A plan with no prior-art question says so in one line with the reason, and no doc gets a "Prior art" section for it. A stone writes a findings doc only when it has a measurement or a record to hold.
+
 ## The subagent prompt
 
 Research runs in a subagent so the main session keeps its context. The call names the subagent's model, Opus, because a subagent inherits its parent's model and a Fable planning session would otherwise run the research on Fable (ruled by the owner on 2026-10-13; `documents/process/model-choice.md`). The prompt carries the question, the catalog rows for its sources, the three rules CLAUDE.md names for every delegation, and a fourth that this skill adds, because the subagent sees neither CLAUDE.md nor AGENTS.md:

@@ -12,8 +12,11 @@ step's one gate; the coordinate-stone skill starts `mw:step-builder`,
 and the sentence of that call says it passes no `model`; no skill, agent or hook
 names a concrete worktree folder, which only the data file's `worktrees` key holds;
 the start-stone, close-stone and coordinate-stone skills hold the clauses each
-stone needs (the plan's hand-overs, the stone registry, where a gotcha lands, the
-worktree under `<worktrees>`), and no skill names the retired "Common Gotchas".
+stone needs (the plan's hand-overs, the "Builds on" reading, the stone registry and
+the row written once at the close, where a gotcha lands, the summary's "For the
+next stone" section, the worktree under `<worktrees>`); the close-stone skill names
+no gotcha history and the coordinate-stone skill sets no row to "open"; and no
+skill names the retired "Common Gotchas".
 A concrete folder is a `<word>-worktrees` name, or an absolute path from a drive
 letter or a home folder that runs through a folder named `worktrees`; the
 placeholder `<worktrees>` and the bare key stay allowed. Each check runs once on
@@ -33,7 +36,11 @@ FIXED = {"name": "step-builder", "model": "claude-opus-5-5", "effort": "high"}
 # The sub-agents and plugin reference pages, read 2026-11-07: a plugin agent ignores these fields.
 IGNORED = ("hooks", "mcpServers", "permissionMode", "initialPrompt")
 STANDING = {"the rule files": ".claude/rules/", "the worktree line": "`git worktree add` line",
-            "the plan citation": "never a plan", "the refusal test": "fails when the refusal breaks",
+            "the call citation": "`pull request <n>, call <m>`",
+            "the plan file": "never a file under `documents/plans/`",
+            "the body's three items": "what the step does, the record rows it implements, and each reversible "
+                                      "choice the plan did not pre-rule",
+            "no test count": "no test count", "the refusal test": "fails when the refusal breaks",
             "the scratchpad name": "carries the step's number in its name", "the quick check": "`quick_check.bat`",
             "CI's run": "CI's run on the pull request's head is the step's one full gate",
             "the background wait": "`gh pr checks <pr> --watch", "the base": "against the base the brief names",
@@ -44,18 +51,25 @@ UNFILTERED = {"an unfiltered run": "unfiltered", "the suite wrapper": "run_tests
               "the lint skill": "`lint` skill", "the suite before the push": "suite and lint"}
 CALL = "`mw:step-builder`"
 # The clauses each stone skill holds: the plan's hand-overs (engine issue 831), the stone registry (engine
-# issue 877), where a gotcha lands since the engine's AGENTS.md retired its gotcha section, and the worktree.
+# issue 877), where a gotcha lands since the engine's AGENTS.md retired its gotcha section, the worktree, and the
+# lighter start and close of the engine's issue 962: the planning reads the "Builds on" summaries, the summary
+# ends with "For the next stone", and the close alone writes the row and the registry entry.
 CLAUSES = {
     "start-stone": {"the hand-overs section": "a \"Hand-overs\" section",
                     "the check against open stones": "`gh pr list --base main --state open",
+                    "the \"Builds on\" reading": "the stones on the entry's \"Builds on\" line",
                     "the worktree": "git worktree add <worktrees>/<slug>"},
     "close-stone": {"the registry": "holds a `stone_registry` key", "the rewrite": "the key's `rewrite` command",
+                    "the row written once": "writes the stone's row once",
                     "where a gotcha lands": "where AGENTS.md \"Maintenance Rules\" says a gotcha lands",
-                    "the gotcha history": "`documents/gotcha-history.md`",
+                    "the summary's last section": "the fixed section \"For the next stone\"",
                     "the worktree removal": "git worktree remove <worktrees>/<slug>"},
-    "coordinate-stone": {"the registry": "holds a `stone_registry` key",
-                         "the rewrite": "the key's `rewrite` command"},
+    "coordinate-stone": {"no row and no registry entry": "writes no workstream row and no registry entry"},
 }
+# The texts a stone skill must not hold: no close writes the gotcha history (the engine's issue 962, ask 4),
+# and no first step marks a stone open in a record.
+FORBIDDEN = {"close-stone": {"the gotcha history": "gotcha-history.md"},
+             "coordinate-stone": {"the row set to open": "to \"open\""}}
 RETIRED = "Common Gotchas"
 # No repository's folder is a constant here: the data file's worktrees key holds it (the plugin's rule 5).
 NAMED_FOLDER = re.compile(r"[\w.-]*\w-worktrees\b", re.I)
@@ -96,9 +110,12 @@ def problems(agent, coordinate, others):
 
 
 def clause_problems(skills):
-    """The clauses missing from the stone skills, and each skill that names the retired section."""
+    """The clauses missing from the stone skills, the forbidden texts they hold, and each skill that names the
+    retired section."""
     found = [f"{skill} does not name {what}" for skill, clauses in CLAUSES.items()
              for what, text in clauses.items() if text not in skills.get(skill, "")]
+    found += [f"{skill} names {what}" for skill, texts in FORBIDDEN.items()
+              for what, text in texts.items() if text in skills.get(skill, "")]
     return found + [f"{skill} names {RETIRED}" for skill, text in skills.items() if RETIRED in text]
 
 
@@ -167,6 +184,10 @@ for skill, clauses in CLAUSES.items():
     for what, text in clauses.items():
         check(f"planted, {skill} without {what}", clause_problems({**skills, skill: skills[skill].replace(text, "")}),
               [f"{skill} does not name {what}"])
+for skill, texts in FORBIDDEN.items():
+    for what, text in texts.items():
+        check(f"planted, {skill} with {what}", clause_problems({**skills, skill: skills[skill] + f"\nSee {text}.\n"}),
+              [f"{skill} names {what}"])
 check("planted, the retired section", clause_problems({**skills, "x": f"AGENTS.md \"{RETIRED}\""}),
       [f"x names {RETIRED}"])
 

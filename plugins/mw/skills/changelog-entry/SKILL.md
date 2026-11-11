@@ -12,7 +12,8 @@ Two related tasks live here. Work out which one is being asked for; ask if it is
 - Entries are **commit-message bullets**, not design docs or implementation narratives. The plan doc is the design record, the code is the implementation record, the changelog is a delta log.
 - One line per entry under `### Added` / `### Changed` / `### Fixed` in the `[Unreleased]` section. Lead with the verb: "Added the arena allocator", "Fixed the flow field re-walking cleared cells".
 - Include the plan-doc anchor in parens: `(phase 0, Stone 3)`. A step inside a stone names the stone and the step: `(founding review stone, step 1)`.
-- Include the new passing-test count in parens when it changed: `(84 tests passing)`. Run the `run-tests` skill first to get the real number; do not guess it.
+- No test count: CI's comment and the closing summary hold the suite's result, and an entry restates no count.
+- Record-keeping gets no entry. A ticked box, a workstream row, an Inbound line or a closing summary changes nothing a reader of the delta log acts on.
 - Do **not** restate API signatures, rationale, test lists or out-of-scope notes that already live in the plan doc or the module header.
 - Multiple unrelated changes landing together get multiple one-line bullets, not one dense paragraph.
 - **Do not rewrite prior entries.** They are records, and Doc Prose's no-retrofit rule covers them.
