@@ -155,11 +155,11 @@ if PROJECT_DATA is not None:
         skipped_checks.append(f"the costly-path table checks: {PROJECT} holds no documents/process/model-choice.md")
     rp.DATA = ENGINE_DATA
 
-# review_profile: Fable 5.1 for a costly step and every stone round, Opus 5.5 otherwise, never Sonnet;
-# full model ids, because the alias `opus` reached an older Opus (ruled 2026-10-12).
-check("costly round 1 on fable", rp.review_profile("costly", 1), ("claude-fable-5-1", "high"))
+# review_profile: Fable 5.2 for a costly step and every stone round, Opus 5.5 otherwise, never Sonnet;
+# full model ids, because the alias `opus` reached an older Opus (ruled 2026-10-12; Fable 5.2 ruled 2026-11-10).
+check("costly round 1 on fable", rp.review_profile("costly", 1), ("claude-fable-5-2", "high"))
 check("costly round 2 on opus", rp.review_profile("costly", 2), ("claude-opus-5-5", "high"))
-check("stone round 2 stays on fable", rp.review_profile("stone", 2), ("claude-fable-5-1", "high"))
+check("stone round 2 stays on fable", rp.review_profile("stone", 2), ("claude-fable-5-2", "high"))
 check("step on opus", rp.review_profile("step", 1), ("claude-opus-5-5", "high"))
 check("no sonnet anywhere", any("sonnet" in model for model, _ in ENGINE_DATA["review"]["profiles"].values()), False)
 check("every profile names a full model id",
@@ -1221,7 +1221,7 @@ check("well formed: a stone round by default", (rp.well_formed(STONE_WELL), rp.w
 # A step review with Records bullets and no blocking bullet exits 0 and posts the bullets; the count reads Blocking only.
 RECORDED = ("## Blocking\n- none\n\n## Unresearched choices\n- none\n\n## Records\n- docs/a.md:3 names a missing heading.\n"
             "- tools/x.py:9 the comment cites the wrong issue.\n\n## Verified\n- read it")
-STONE = ("stone", "claude-fable-5-1", "high")
+STONE = ("stone", "claude-fable-5-2", "high")
 
 
 def single_run(reply, profile, post=True):

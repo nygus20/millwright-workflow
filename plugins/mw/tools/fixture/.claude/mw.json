@@ -21,8 +21,8 @@
       {"pattern": "tools/review_pr\\.py$", "reason": "the reviewer: a bug weakens every later review"}
     ],
     "profiles": {
-      "stone": ["claude-fable-5-1", "high"],
-      "costly": ["claude-fable-5-1", "high"],
+      "stone": ["claude-fable-5-2", "high"],
+      "costly": ["claude-fable-5-2", "high"],
       "step": ["claude-opus-5-5", "high"]
     },
     "allowed_tools": [

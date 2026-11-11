@@ -463,6 +463,10 @@ with tempfile.TemporaryDirectory() as scratch:
     review = mw_data.load(broken)["review"]
     check("data: the loader fills the review defaults", {k: review[k] for k in mw_data.REVIEW_DEFAULTS},
           mw_data.REVIEW_DEFAULTS)
+    # The defaults name Fable 5.2 for a stone and a costly step, and Opus 5.5 for a step (ruled 2026-11-10).
+    check("data: the default profiles name fable 5.2 and opus 5.5", review["profiles"],
+          {"stone": ["claude-fable-5-2", "high"], "costly": ["claude-fable-5-2", "high"],
+           "step": ["claude-opus-5-5", "high"]})
     minimal["review"]["findings_folder"] = "notes/findings/"
     write_data(broken, minimal)
     check("data: the loader keeps a value the file sets", mw_data.load(broken)["review"]["findings_folder"],
