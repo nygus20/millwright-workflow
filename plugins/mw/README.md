@@ -28,7 +28,7 @@ This plugin holds the way of working that the Millwright engine and the reposito
 
 ## How a repository enables it
 
-1. Copy `templates/mw.json` to `.claude/mw.json` and fill in the repository's name, its worktree folder, its guarded files and folders, its scratch patterns and its costly paths. A repository that keeps a stone registry also adds the optional `stone_registry` key, whose `file` names the registry and whose `rewrite` names the command that writes the files built from the registry; the `mw:coordinate-stone` and `mw:close-stone` skills then name both in the first and the closing step.
+1. Copy `templates/mw.json` to `.claude/mw.json` and fill in the repository's name, its worktree folder, its guarded files and folders, its scratch patterns and its costly paths. A repository that keeps a stone registry also adds the optional `stone_registry` key, whose `file` names the registry and whose `rewrite` names the command that writes the files built from the registry; the `mw:close-stone` skill then writes the stone's entry and runs the rewrite once, in the closing step.
 2. Copy `templates/require_plugin.py` to `.claude/hooks/require_plugin.py` without changing a byte.
 3. Add three keys to `.claude/settings.json`:
 
