@@ -66,6 +66,49 @@ for name, text in (("another pull request", BRIEF.replace("42", "43")), ("no mar
                    ("an item missing", BRIEF.replace("- Deferred: none.\n", "")), ("empty", "")):
     check(f"brief: {name}", stop_code(ms.check_brief, text, 42), 2)
 
+
+def ambiguous(text):
+    """BRIEF with its Ambiguities item replaced by text, which starts at `- Ambiguities:`."""
+    return BRIEF.replace("- Ambiguities: none.\n", text + "\n")
+
+
+def item_of(size, fill="a"):
+    """An Ambiguities line of exactly size UTF-8 bytes, filled with fill."""
+    head = "- Ambiguities: "
+    return head + fill * ((size - len(head.encode("utf-8"))) // len(fill.encode("utf-8")))
+
+
+def brief_stop(text):
+    """(exit code, line) of check_brief's refusal, or None when it passes."""
+    try:
+        ms.check_brief(text, 42)
+    except ms.Stop as stop:
+        return stop.args
+    return None
+
+
+# The Ambiguities cap: 600 UTF-8 bytes from `- Ambiguities:` to the next item, the item's own lines included.
+check("ambiguities: the test lines hold 600 and 601 bytes",
+      (len(item_of(600).encode("utf-8")), len((item_of(600) + "b").encode("utf-8"))), (600, 601))
+check("ambiguities: 600 bytes pass", brief_stop(ambiguous(item_of(600))), None)
+check("ambiguities: 601 bytes stop with exit 2 and say the form",
+      brief_stop(ambiguous(item_of(600) + "b")),
+      (2, "the brief's Ambiguities item holds 601 bytes, over the cap of 600: one sentence per ambiguity, or \"none\"; "
+          "no count and no version constant"))
+WIDE = item_of(599, "\u00e9")  # two bytes a character: 599 bytes in 307 characters
+check("ambiguities: bytes, not characters: 601 bytes in 309 characters stop, 600 pass",
+      (len((WIDE + "aa").encode("utf-8")), len(WIDE + "aa"), stop_code(ms.check_brief, ambiguous(WIDE + "aa"), 42),
+       brief_stop(ambiguous(WIDE + "a"))), (601, 309, 2, None))
+check("ambiguities: a continuation line counts toward the item",
+      stop_code(ms.check_brief, ambiguous(item_of(400) + "\n  " + "c" * 200), 42), 2)
+check("ambiguities: a bullet that names no item of the form counts toward the item",
+      stop_code(ms.check_brief, ambiguous(item_of(400) + "\n- the second one: " + "c" * 200), 42), 2)
+check("ambiguities: a long next item does not count", brief_stop(ambiguous(item_of(600) + "\n- Records: " + "r" * 900)), None)
+check("ambiguities: a long Deferred item does not count",
+      brief_stop(BRIEF.replace("- Deferred: none.", "- Deferred: " + "d" * 900)), None)
+check("ambiguities: the last item runs to the end",
+      stop_code(ms.check_brief, BRIEF.replace("- Ambiguities: none.\n", "") + item_of(600) + "b\n", 42), 2)
+
 check("stone: a step on the stone", ms.stone_of("step/12-save/0b-x", "stone/12-save"), "stone/12-save")
 check("stone: a stacked step", ms.stone_of("step/12-save/2-y", "step/12-save/1-x"), "stone/12-save")
 check("stone: the stone's own pull request", stop_code(ms.stone_of, "stone/12-save", "main"), 2)
@@ -272,6 +315,12 @@ check("moved head: no merge", scenario(Fake([GREEN], moved=True))[:2], (2, []))
 check("deletes on merge: no merge", scenario(Fake([GREEN], deletes="true"))[:2], (2, []))
 fake = Fake([GREEN])
 check("bad brief: stops before any call", (scenario(fake, BRIEF.replace("42", "41"))[0], fake.calls), (2, []))
+fake = Fake([GREEN])
+code, merges, said = scenario(fake, ambiguous(item_of(600) + "b"))
+check("ambiguities over the cap: exit 2 before any call, the form named",
+      (code, fake.calls, "one sentence per ambiguity" in said), (2, [], True))
+code, merges, _ = scenario(Fake([GREEN]), ambiguous(item_of(600)))
+check("ambiguities at the cap: the step merges", (code, len(merges)), (0, 1))
 
 fake = Fake([GREEN], base="step/12-save/1-x", below=False)
 check("stacked, below open: no retarget", (scenario(fake)[0], [c for c in fake.calls if c[:3] == ["gh", "pr", "edit"]]), (2, []))

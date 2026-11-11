@@ -5,7 +5,8 @@ Usage:
 
 One command does a step's merge mechanics (the owner's ruling of 2026-10-13). In order:
 1. It refuses a brief that breaks the form of documents/process/agent-rulings.md, "The
-   records", before any gh call; a pull request that is closed, a draft, or not a step
+   records", or whose Ambiguities item, from `- Ambiguities:` to the next item, runs over
+   600 UTF-8 bytes, before any gh call; a pull request that is closed, a draft, or not a step
    (head `step/<slug>/<step>`, base `stone/<slug>` or a step of it); a stone with no open
    pull request to main; and a repository that deletes head branches on merge, because
    GitHub closes a pull request whose base branch is deleted.
@@ -79,6 +80,11 @@ LOCK_FOLDER = "mw-merge-step"
 STEP_BRANCH = re.compile(r"^step/([^/]+)/[^/]+$")
 BRIEF_MARK = re.compile(r"^<!-- mw-step-brief: (\S+) -->$")
 BRIEF_ITEMS = ("- Merged:", "- Rulings:", "- Ambiguities:", "- Deferred:", "- For the owner:")
+# The items that end the Ambiguities item: every item of the brief's form, the optional Records item included.
+NEXT_ITEMS = tuple(item for item in BRIEF_ITEMS if item != "- Ambiguities:") + ("- Records:",)
+# The Ambiguities item's cap in UTF-8 bytes, from its `- Ambiguities:` to the next item, approved by the owner
+# 2026-11-11: the game's stone G19 measured a mean line of 607 bytes (the engine's issue 961).
+AMBIGUITIES_BYTES = 600
 GREEN = ("success", "skipped")
 # The step of the workflow's build job that writes the comment: it runs on a build, a docs-only run and a
 # run that says no code path changed, and skips on a label or body edit, which checks only the size.
@@ -252,7 +258,19 @@ def check_brief(text, pr):
             raise Stop(2, f"the brief has no `{item}` line")
     if not re.search(rf"^- Merged: pull request {pr}\b", text, re.M):
         raise Stop(2, f"the brief's Merged line does not name pull request {pr}")
+    size = len(ambiguities(lines).encode("utf-8"))
+    if size > AMBIGUITIES_BYTES:
+        raise Stop(2, f"the brief's Ambiguities item holds {size} bytes, over the cap of {AMBIGUITIES_BYTES}: "
+                      "one sentence per ambiguity, or \"none\"; no count and no version constant")
     return step
+
+
+def ambiguities(lines):
+    """The brief's Ambiguities item: from its `- Ambiguities:` line to the line before the next item, or to the end,
+    without the trailing whitespace."""
+    start = next(index for index, line in enumerate(lines) if line.startswith("- Ambiguities:"))
+    end = next((index for index in range(start + 1, len(lines)) if lines[index].startswith(NEXT_ITEMS)), len(lines))
+    return "\n".join(lines[start:end]).rstrip()
 
 
 def stone_of(head, base):
