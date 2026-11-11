@@ -490,8 +490,11 @@ check("exit after a blocking round", rp.exit_code(1, 1), 3)
 check("exit after an extra round", rp.exit_code(1, 3), 3)
 
 # Both prompts carry the blocking rule; the budget line and the heading check.
-check("fix check has the blocking rule", rp.BLOCKING_RULE in rp.FIX_CHECK_INSTRUCTIONS, True)
-check("full review has the blocking rule", rp.BLOCKING_RULE in rp.INSTRUCTIONS, True)
+check("fix check has the blocking rule", rp.BLOCKING_RULE in rp.instructions((1, "a", "- x", "a..b")), True)
+check("full review has the blocking rule", rp.BLOCKING_RULE in rp.instructions(None), True)
+check("every slot of both prompts fills, on both kinds of round",
+      [re.findall(r"<(?:repository|path sources|check 6 tail|blocking rule|output format)>", rp.instructions(fix, step))
+       for fix in (None, (1, "a", "- x", "a..b")) for step in (False, True)], [[], [], [], []])
 # The suite rule (the engine's issue 686): both prompts forbid a full run, allow a filtered one, and read CI's result.
 for name, text in (("full review", rp.instructions(None)), ("fix check", rp.instructions((1, "a", "- x", "a..b")))):
     check(f"{name}: carries the suite rule before the foreground rule",
@@ -542,9 +545,12 @@ check("join: no range, no text", rp.join_ranges([]), "")
 check("well formed", rp.well_formed("## Blocking\n- none\n\n## Unresearched choices\n- none\n\n## Verified\n- x"), True)
 check("the old non-blocking headings are not well formed",
       rp.well_formed("## Blocking\n- none\n\n## Non-blocking\n- none\n\n## Verified\n- x"), False)
-# Blocking findings only (ruled 2026-10-12): neither prompt asks for a non-blocking finding.
-check("the full review asks for no non-blocking finding", "Non-blocking" in rp.INSTRUCTIONS, False)
-check("the fix check asks for no non-blocking finding", "non-blocking" in rp.FIX_CHECK_INSTRUCTIONS.lower(), False)
+# Blocking findings only (ruled 2026-10-12): no prompt asks for a non-blocking finding, on either kind of round, and a
+# step round's Records heading is worded without the phrase.
+for fix in (None, (1, "a", "- x", "a..b")):
+    for step in (False, True):
+        check(f"{'fix check' if fix else 'full review'}, {'step' if step else 'stone'} round: asks for no non-blocking "
+              "finding", "non-blocking" in rp.instructions(fix, step).lower(), False)
 check("the format names the unresearched choices", "## Unresearched choices" in rp.OUTPUT_FORMAT, True)
 check("cut off after Blocking", rp.well_formed("## Blocking\n- p:1 half a sente"), False)
 
@@ -1085,11 +1091,11 @@ for argv, base in ((["83"], "step/41-x/1-a"), (["83", "--stone", "41"], "stone/4
           ["pull/83/head", base])
 
 # review_in over a sliced round: every slice runs at once in its own worktree; a slice that fails once runs
-# again, and one that fails twice exits 2 with nothing posted.
-WELL = "## Blocking\n- none\n\n## Unresearched choices\n- none\n\n## Verified\n- read it"
+# again, and one that fails twice exits 2 with nothing posted. The round is a step round, so a reply carries Records.
+WELL = "## Blocking\n- none\n\n## Unresearched choices\n- none\n\n## Records\n- none\n\n## Verified\n- read it"
 
 
-def sliced_run(answer, post=False, slices=2):
+def sliced_run(answer, post=False, slices=2, profile=STEP):
     """(exit code, claude calls as (cwd, attempt), posted bodies, stderr) of review_in over planted slices."""
     calls, posted, lock = [], [], threading.Lock()
 
@@ -1110,7 +1116,7 @@ def sliced_run(answer, post=False, slices=2):
     try:
         with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
             code = rp.review_in(Path("first"), [f"prompt {k}" for k in range(slices)], pr, types.SimpleNamespace(pr=83, post=post),
-                                (1, "full", "", STEP, 60, "c", None, None, None), (800000, three[:slices]))
+                                (1, "full", "", profile, 60, "c", None, None, None), (800000, three[:slices]))
     finally:
         rp.subprocess.run, rp.post_comment = saved
     return code, calls, posted, err.getvalue()
@@ -1141,7 +1147,136 @@ check("slices: the rerun is said", "slice 1 of 2: claude exited 1; running it on
 code, calls, posted, err = sliced_run(lambda cwd, attempt: (0, "half a review") if cwd != Path("first") else (0, WELL), post=True)
 check("slices: a slice that fails twice exits 2 and posts nothing", (code, posted, len(calls)), (2, [], 3))
 check("slices: the failure names the slice and the reviewer's last lines",
-      ("slice 2 of 2 failed twice: its reply lacks one of the three headings" in err, "half a review" in err), (True, True))
+      ("slice 2 of 2 failed twice: its reply lacks one of the four headings" in err, "half a review" in err), (True, True))
+
+# The rule per kind of round (ruled by the owner 2026-11-10). A stone round keeps today's rule and three headings word
+# for word: the two texts below are the tool's at v0.1.13. A step round blocks on the narrower rule and adds Records,
+# which stops no merge.
+TODAY_RULE = """What blocks. A finding goes under Blocking only if it shows one of these:
+- the step's own claim or the stone's exit test is not met;
+- a repository invariant is broken;
+- two tracked docs contradict each other, or a doc states a false fact;
+- a path, heading or command the change names does not exist;
+- a tool can lose data or leak a secret.
+A gap in a later stone's plan never blocks, because every stone is replanned from scratch when it starts. Being cheap to fix does not make a finding blocking. Report nothing else: leave out every finding that does not meet this rule, a gap in a later stone's plan included."""
+TODAY_FORMAT = """Write the result as Markdown with exactly these three headings, in this order:
+
+## Blocking
+One bullet per finding that meets the rule above. Each bullet starts with `path:line` where it applies, then one sentence stating the defect and one sentence stating the concrete failure. Write `- none` if there is none.
+
+## Unresearched choices
+One bullet per hard-to-reverse design choice that check 7 finds, and per ported part with no row that check 8 finds, same format. `- none` if none. Nothing else goes here.
+
+## Verified
+At most five bullets, each a claim you checked and found true, with how you checked it.
+
+Be specific and terse. No preamble, no summary paragraph, no praise.
+"""
+TODAY_CHECK_6 = "and every tracked .md for prose rules.\n7. "
+NARROWED = ("- the step's own claim or the stone's exit test is not met, a claim of verification that no test carries "
+            "included;\n- a repository invariant is broken;\n- a path or a command that a tool, a skill or a rule file "
+            "names does not exist;\n- a tool can lose data or leak a secret.\nWhat goes under Records.")
+FIX = (1, "abc", "- x", "a..b")
+check("rounds: the stone round's rule and format are today's", (rp.BLOCKING_RULE, rp.OUTPUT_FORMAT), (TODAY_RULE, TODAY_FORMAT))
+check("rounds: the base sets the kind", (rp.is_step_round("main"), rp.is_step_round("stone/x"), rp.is_step_round("step/x/1-a")),
+      (False, True, True))
+with tempfile.TemporaryDirectory() as scratch:
+    worktree = Path(scratch)
+    (worktree / "CLAUDE.md").write_text("## Load-Bearing Invariants\n1. a rule\n", encoding="utf-8")
+    prompts = {(base, fix is not None): rp.build_prompt({**PROMPT_PR, "baseRefName": base}, "d", None, [], worktree, fix,
+                                                        30 if fix else 60, None)
+               for base in ("main", "stone/x", "step/x/1-a") for fix in (None, FIX)}
+for (base, fixing), text in prompts.items():
+    name = f"rounds: {'a fix check' if fixing else 'a full review'} into {base}"
+    if base == "main":
+        check(f"{name} carries today's rule and format, word for word, and no Records",
+              (TODAY_RULE + "\n\n" + TODAY_FORMAT in text, "Records" in text, NARROWED in text, "Write the three headings" in text),
+              (True, False, False, True))
+    else:
+        check(f"{name} carries the narrowed rule, the Records heading and four headings",
+              (NARROWED in text, "\n## Records\n" in text, TODAY_RULE in text, "exactly these four headings" in text,
+               "Write the four headings" in text), (True, True, False, True, True))
+check("rounds: a stone round's check 6 is today's", TODAY_CHECK_6 in prompts[("main", False)], True)
+check("rounds: a step round's check 6 sends its findings to Records",
+      "prose rules. On this round each of these goes under Records, except a path or a command that a tool, a skill or a "
+      "rule file names, which blocks.\n7. " in prompts[("stone/x", False)], True)
+check("rounds: the step rule names what goes under Records and what is no finding",
+      all(part in rp.STEP_BLOCKING_RULE for part in ("- two docs contradict each other;", "- a doc states something false;",
+                                                      "- a citation is wrong;", "- a comment is worded wrongly.",
+                                                      "A Records bullet stops no merge",
+                                                      "Code that later departs from a closed stone's dated record is no finding")),
+      True)
+check("rounds: Records sits between Unresearched choices and Verified",
+      in_order(rp.STEP_OUTPUT_FORMAT, "## Blocking", "## Unresearched choices", "## Records", "## Verified"), True)
+
+# well_formed per kind: a step round needs Records; a stone round refuses it, so a finding filed there cannot escape the
+# blocking count.
+STONE_WELL = WELL.replace("## Records\n- none\n\n", "")
+check("well formed: a step round with its four headings", rp.well_formed(WELL, True), True)
+check("well formed: a step round without Records is refused", rp.well_formed(STONE_WELL, True), False)
+check("well formed: a stone round with its three headings", rp.well_formed(STONE_WELL, False), True)
+check("well formed: a stone round carrying Records is refused", rp.well_formed(WELL, False), False)
+check("well formed: a stone round by default", (rp.well_formed(STONE_WELL), rp.well_formed(WELL)), (True, False))
+
+# A step review with Records bullets and no blocking bullet exits 0 and posts the bullets; the count reads Blocking only.
+RECORDED = ("## Blocking\n- none\n\n## Unresearched choices\n- none\n\n## Records\n- docs/a.md:3 names a missing heading.\n"
+            "- tools/x.py:9 the comment cites the wrong issue.\n\n## Verified\n- read it")
+STONE = ("stone", "claude-fable-5-1", "high")
+
+
+def single_run(reply, profile, post=True):
+    """(exit code, posted bodies, stdout, stderr) of review_in over one reviewer that answers reply."""
+    posted, saved = [], (rp.subprocess.run, rp.post_comment)
+    rp.subprocess.run = lambda cmd, **kw: rp.subprocess.CompletedProcess(cmd, 0, reply, "")
+    rp.post_comment = lambda number, text, existing: posted.append(text) or rp.subprocess.CompletedProcess([], 0, "", "")
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = rp.review_in(Path("."), ["prompt"], pr, types.SimpleNamespace(pr=83, post=post),
+                                (1, "full", "", profile, 60, "c", None, None, None))
+    finally:
+        rp.subprocess.run, rp.post_comment = saved
+    return code, posted, out.getvalue(), err.getvalue()
+
+
+code, posted, said, _ = single_run(RECORDED, STEP)
+check("records: a step review with Records bullets and no blocking bullet exits 0 and posts once", (code, len(posted)), (0, 1))
+check("records: the posted comment shows both bullets under Records, and the count reads Blocking only",
+      (posted and "## Records\n- docs/a.md:3 names a missing heading.\n- tools/x.py:9 the comment cites the wrong issue." in posted[0],
+       posted and "_0 blocking finding(s)." in posted[0], posted and "<!-- mw-review-exit: 0 -->" in posted[0],
+       "round 1, 0 blocking" in said), (True, True, True, True))
+check("records: a costly step round reads Records too", single_run(RECORDED, ("costly",) + STEP[1:])[:1], (0,))
+code, posted, _, err = single_run(RECORDED.replace("## Blocking\n- none", "## Blocking\n- tools/x.py:1 loses data."), STEP)
+check("records: a Blocking bullet beside Records still exits 1, counted once",
+      (code, posted and "_1 blocking finding(s)." in posted[0]), (1, True))
+code, posted, _, err = single_run(STONE_WELL, STEP)
+check("records: a step reply without Records exits 2 and posts nothing", (code, posted), (2, []))
+check("records: the refusal names the four headings", "lacks one of the four headings; nothing posted" in err, True)
+code, posted, _, err = single_run(RECORDED, STONE)
+check("records: a stone reply carrying Records exits 2 and posts nothing", (code, posted), (2, []))
+check("records: the refusal names the Records heading", "or carries a Records heading; nothing posted" in err, True)
+check("records: a stone reply with its three headings posts as before", single_run(STONE_WELL, STONE)[:2][0], 0)
+
+# A sliced step review merges every slice's Records bullets under one heading, and the count reads Blocking only.
+REC_A = RECORDED
+REC_B = ("## Blocking\n- none\n\n## Unresearched choices\n- none\n\n## Records\n- skills/s.md:5 contradicts README.md.\n\n"
+         "## Verified\n- read b")
+merged_records = rp.merge_slices([REC_A, REC_B], True)
+check("records: a merged step review keeps one Records heading with every slice's bullets, in slice order",
+      (merged_records.count("## Records"), in_order(merged_records, "## Records", "- docs/a.md:3", "- tools/x.py:9",
+                                                    "- skills/s.md:5", "## Verified"), rp.well_formed(merged_records, True)),
+      (1, True, True))
+check("records: the merged step review has no blocking finding", rp.blocking_count(merged_records), 0)
+check("records: Records stays none only when every slice wrote it",
+      "## Records\n- none" in rp.merge_slices([WELL, WELL], True), True)
+check("records: a stone merge keeps today's three headings", rp.merge_slices([STONE_WELL, STONE_WELL]),
+      "## Blocking\n- none\n\n## Unresearched choices\n- none\n\n## Verified\n- read it\n- read it")
+code, calls, posted, _ = sliced_run(lambda cwd, attempt: (0, REC_A if cwd == Path("first") else REC_B), post=True)
+check("records: a sliced step round exits 0 and posts the merged Records",
+      (code, len(posted), posted and "- tools/x.py:9 the comment cites the wrong issue.\n- skills/s.md:5" in posted[0]),
+      (0, 1, True))
+code, calls, posted, err = sliced_run(lambda cwd, attempt: (0, WELL), post=True, profile=STONE)
+check("records: a sliced stone round refuses a reply carrying Records", (code, posted), (2, []))
 
 # The data file's two slice keys: the defaults fill in, a file sets them, and a value that is not a positive integer
 # is refused.
