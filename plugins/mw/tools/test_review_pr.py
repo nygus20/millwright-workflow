@@ -6,7 +6,9 @@ Usage:
 PROJECT is the repository the checks run against: the folder given, else
 CLAUDE_PROJECT_DIR, else the current folder. tools/run_checks.py passes it.
 The tool's behaviour is checked against the fixture tools/fixture/.claude/mw.json,
-the engine's lists at v0.1.0. PROJECT's own data file must load, its costly
+the engine's lists of v0.1.0 with the review profiles of 0.1.14's defaults and,
+from 0.1.15 on, the four check scripts' grants under tools/tests/. PROJECT's
+own data file must load, its costly
 paths must compile, its grants must join the base list, and the prompt must name
 it; when PROJECT holds documents/process/model-choice.md, its costly-path table
 must match its data file row for row, and otherwise that check prints a skipped
