@@ -15,7 +15,9 @@ file inside a worktree, the emoji hook passes the text stars and quotation
 dingbats, and the scratch hook keeps the file name's case. The guard hook and
 the scratch hook read their lists from the data file, .claude/mw.json: each
 temporary repository gets one, a copy of the fixture tools/fixture/.claude/mw.json
-(the engine's lists at v0.1.0) unless a check writes its own, and the data-file
+(the engine's lists of v0.1.0, with the review profiles of 0.1.14's defaults and,
+from 0.1.15 on, the four check scripts' grants under tools/tests/) unless a
+check writes its own, and the data-file
 checks give two repositories different lists and break the file in each way the
 loader refuses. PROJECT's own data file must load, and a temporary repository
 holding a copy of it must deny each file, folder and scratch pattern it lists.
