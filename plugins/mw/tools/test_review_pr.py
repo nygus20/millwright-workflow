@@ -557,7 +557,9 @@ check("cut off after Blocking", rp.well_formed("## Blocking\n- p:1 half a sente"
 # build_prompt's context-path rule (documents/known-issues.md, 2026-10-09): a relative --context path is
 # read at the reviewed commit when it exists there and stays inside the worktree, otherwise as typed from
 # the caller's directory; a file found nowhere, a missing CLAUDE.md or a missing exit test exits 2.
-# The worktree is a temporary folder, and stone_plan is replaced so no gh call runs.
+# The worktree is a temporary folder, and stone_plan is replaced so no gh call runs; the plan-table checks below
+# run the real one over a stubbed gh.
+REAL_STONE_PLAN = rp.stone_plan
 rp.stone_plan = lambda base_ref: None
 PROMPT_PR = {"number": 7, "title": "t", "body": "b", "baseRefName": "stone/x", "headRefOid": HEAD}
 
@@ -1277,6 +1279,80 @@ check("records: a sliced step round exits 0 and posts the merged Records",
       (0, 1, True))
 code, calls, posted, err = sliced_run(lambda cwd, attempt: (0, WELL), post=True, profile=STONE)
 check("records: a sliced stone round refuses a reply carrying Records", (code, posted), (2, []))
+
+# The Verified form per kind of round (approved by the owner 2026-11-11): a step round's full review asks for three
+# one-sentence bullets, or one line on a clean Blocking; a stone round and every fix check keep five bullets.
+STEP_VERIFIED = ("## Verified\nAt most three bullets of one sentence each, each a claim you checked and found true and "
+                 "how you checked it, or one line when Blocking holds `- none`.")
+FIVE = "At most five bullets, each a claim you checked and found true, with how you checked it."
+check("verified: the step section's text", rp.STEP_VERIFIED_SECTION, STEP_VERIFIED)
+for (base, fixing), text in prompts.items():
+    step_full = base != "main" and not fixing
+    check(f"verified: {'a fix check' if fixing else 'a full review'} into {base} carries "
+          f"{'the three-bullet form' if step_full else 'five bullets'}",
+          (STEP_VERIFIED in text, FIVE in text, "At most five bullets" in text), (step_full, not step_full, not step_full))
+check("verified: a step fix check keeps its four headings and the fixed-finding line",
+      (rp.STEP_FIX_OUTPUT_FORMAT in prompts[("stone/x", True)], "## Records" in rp.STEP_FIX_OUTPUT_FORMAT,
+       "Under Verified, give one bullet per earlier blocking finding that is fixed" in prompts[("stone/x", True)]),
+      (True, True, True))
+check("verified: the fix check's instructions are today's", rp.FIX_CHECK_INSTRUCTIONS.startswith(
+      "You are checking the fixes to one pull request in the <repository> repository."), True)
+
+
+# The plan's tables: each comment on the stone's pull request that opens with the mark reaches the prompt after the
+# body, in order; a comment that only quotes the mark does not; a failed listing leaves the body alone.
+def plan_gh(listing, body="the plan's body"):
+    """A stand-in for run that answers the stone's pull request list and its comment listing."""
+    calls = []
+
+    def fake(cmd, **kw):
+        calls.append(cmd)
+        if cmd[:3] == ["gh", "pr", "list"]:
+            return rp.subprocess.CompletedProcess(cmd, 0, json.dumps([{"number": 970, "body": body}]), "")
+        if cmd[:2] == ["gh", "api"] and cmd[2].endswith("/issues/970/comments"):
+            return rp.subprocess.CompletedProcess(cmd, *listing)
+        return rp.subprocess.CompletedProcess(cmd, 1, "", "unexpected call")
+    return fake, calls
+
+
+TABLES = [[{"body": "a ruling"}, {"body": rp.PLAN_TABLES_MARK + "\n| Step | Lines |\n|---|---|\n| 1-first | 40 |"},
+           {"body": "> " + rp.PLAN_TABLES_MARK + "\na quoted mark"}],
+          [{"body": rp.PLAN_TABLES_MARK + "\n| Call | Text |\n|---|---|\n| 12 | the second table |"}]]
+saved = (rp.run, rp.stone_plan)
+try:
+    rp.run, calls = plan_gh((0, json.dumps(TABLES), ""))
+    check("tables: stone_plan returns the body and both tables in order, without the mark or the quote",
+          REAL_STONE_PLAN("step/x/1-a"), ("the plan's body", ["| Step | Lines |\n|---|---|\n| 1-first | 40 |",
+                                                              "| Call | Text |\n|---|---|\n| 12 | the second table |"]))
+    check("tables: the lookup reads the stone branch and lists the comments of its pull request",
+          ([c[c.index("--head") + 1] for c in calls if c[:3] == ["gh", "pr", "list"]],
+           any("--paginate" in c for c in calls if c[:2] == ["gh", "api"])), (["stone/x"], True))
+    rp.stone_plan = REAL_STONE_PLAN
+    with tempfile.TemporaryDirectory() as scratch:
+        worktree = Path(scratch)
+        (worktree / "CLAUDE.md").write_text("## Load-Bearing Invariants\n1. a rule\n", encoding="utf-8")
+        tabled = rp.build_prompt({**PROMPT_PR, "baseRefName": "stone/x"}, "d", None, [], worktree)
+        check("tables: a step round's prompt holds the body, then both tables in order, before the invariants",
+              in_order(tabled, "# The stone's approved plan", "the plan's body", "| 1-first | 40 |",
+                       "| 12 | the second table |", "# Repository invariants"), True)
+        check("tables: a quoted mark stays out of the prompt", "a quoted mark" in tabled, False)
+        rp.run, _ = plan_gh((1, "", "HTTP 502"))
+        failed = rp.build_prompt({**PROMPT_PR, "baseRefName": "stone/x"}, "d", None, [], worktree)
+        check("tables: a failed listing gives the body alone",
+              (REAL_STONE_PLAN("stone/x"), "the plan's body" in failed, "mw-plan-tables" in failed),
+              (("the plan's body", []), True, False))
+        rp.run, _ = plan_gh((0, "<html>", ""))
+        check("tables: a listing that is not JSON gives the body alone", REAL_STONE_PLAN("stone/x"),
+              ("the plan's body", []))
+        rp.run, _ = plan_gh((0, json.dumps(TABLES), ""), body="")
+        check("tables: a pull request with tables and no body still gives the tables",
+              REAL_STONE_PLAN("stone/x"), ("", ["| Step | Lines |\n|---|---|\n| 1-first | 40 |",
+                                                "| Call | Text |\n|---|---|\n| 12 | the second table |"]))
+        rp.run, _ = plan_gh((0, json.dumps([[{"body": "a ruling"}]]), ""), body="")
+        check("tables: a pull request with neither gives None", REAL_STONE_PLAN("stone/x"), None)
+        check("tables: a pull request into main reads no stone plan", REAL_STONE_PLAN("main"), None)
+finally:
+    rp.run, rp.stone_plan = saved
 
 # The data file's two slice keys: the defaults fill in, a file sets them, and a value that is not a positive integer
 # is refused.

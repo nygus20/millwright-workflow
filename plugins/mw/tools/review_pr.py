@@ -46,6 +46,9 @@ false statement in a doc, a wrong citation, a missing heading or path a doc
 names, a comment's wording. The exit code and the comment's blocking count
 read only the Blocking heading, so a Records bullet never sets exit 1; the
 comment shows the bullets, and the stone's closing step fixes them together.
+A step round's full review writes at most three one-sentence bullets under
+Verified, or one line when Blocking holds `- none` (approved by the owner
+2026-11-11); a step round's fix check and a stone round keep five bullets.
 
 Rounds. The posted comment records the reviewed commit and the round number.
 The next run reads them back: when new commits sit on top of the reviewed one,
@@ -96,7 +99,9 @@ When none holds it, the tool refuses as before. For a step
 (a pull request into a stone branch, or into a step branch of that stone while
 the step below is open) the body of
 the stone's open pull request to main, which holds the approved plan, is
-appended through one `gh pr list` call. --context FILE appends a file verbatim, for a
+appended through one `gh pr list` call, and after it each comment on that pull
+request that opens with `<!-- mw-plan-tables -->`, in order, through one comment
+listing; a failed listing leaves the body alone. --context FILE appends a file verbatim, for a
 documents-only step whose exit test is a plan file. A relative path is read at
 the pull request head when it exists there and its resolved path stays inside
 the worktree; otherwise it is read as typed, relative to the caller's directory,
@@ -200,6 +205,9 @@ WAIT_ANNOUNCED = re.compile(
     re.I,
 )
 MARKER = "<!-- mw-review -->"
+# A comment on the stone's pull request that opens with this mark holds tables of the approved plan; the prompt
+# carries each such comment after the body (the engine's issue 962, approved by the owner 2026-11-11).
+PLAN_TABLES_MARK = "<!-- mw-plan-tables -->"
 HEAD_MARK = re.compile(r"<!-- mw-review-head: ([0-9a-f]{7,40}) -->")
 ROUND_MARK = re.compile(r"<!-- mw-review-round: (\d+) -->")
 EXIT_MARK = re.compile(r"<!-- mw-review-exit: (\d) -->")
@@ -274,6 +282,11 @@ RECORDS_SECTION = """## Records
 One bullet per finding that the rule above sends to Records, same format. `- none` if none. Nothing else goes here."""
 VERIFIED_SECTION = """## Verified
 At most five bullets, each a claim you checked and found true, with how you checked it."""
+# A step round's full review, approved by the owner 2026-11-11 (the engine's issue 961): the game's stone G19
+# measured 72 percent of the review comments' bytes under Verified. A stone round and a fix check keep
+# VERIFIED_SECTION.
+STEP_VERIFIED_SECTION = """## Verified
+At most three bullets of one sentence each, each a claim you checked and found true and how you checked it, or one line when Blocking holds `- none`."""
 FORMAT_CLOSE = "Be specific and terse. No preamble, no summary paragraph, no praise.\n"
 
 
@@ -285,7 +298,9 @@ def output_format(sections):
 
 
 OUTPUT_FORMAT = output_format((BLOCKING_SECTION, UNRESEARCHED_SECTION, VERIFIED_SECTION))  # a stone round's
-STEP_OUTPUT_FORMAT = output_format((BLOCKING_SECTION, UNRESEARCHED_SECTION, RECORDS_SECTION, VERIFIED_SECTION))
+STEP_OUTPUT_FORMAT = output_format((BLOCKING_SECTION, UNRESEARCHED_SECTION, RECORDS_SECTION, STEP_VERIFIED_SECTION))
+# A step round's fix check: its Verified names each earlier finding that is fixed, so it keeps VERIFIED_SECTION.
+STEP_FIX_OUTPUT_FORMAT = output_format((BLOCKING_SECTION, UNRESEARCHED_SECTION, RECORDS_SECTION, VERIFIED_SECTION))
 STONE_HEADINGS = ("Blocking", "Unresearched choices", "Verified")
 STEP_HEADINGS = ("Blocking", "Unresearched choices", "Records", "Verified")
 # Check 6 on a step round: its document findings go under Records, except a path or a command the blocking rule names.
@@ -384,14 +399,15 @@ def instructions(fix_check, step_round=False):
 
     It fills the repository's name, the files whose paths the invariant test checks, and the round's blocking
     rule and output format: a stone round's are BLOCKING_RULE and OUTPUT_FORMAT, word for word as before the
-    step rule; a step round's are STEP_BLOCKING_RULE and STEP_OUTPUT_FORMAT, and check 6 sends its findings to
-    Records.
+    step rule; a step round's are STEP_BLOCKING_RULE and STEP_OUTPUT_FORMAT, or STEP_FIX_OUTPUT_FORMAT for its
+    fix check, and check 6 sends its findings to Records.
     """
     sources = DATA["review"]["path_sources"]
     named = ", ".join(sources[:-1]) + " and " + sources[-1] if len(sources) > 1 else "".join(sources)
     where = f" in any doc other than {named}. The invariant test checks those for paths" if sources else ""
     text = FIX_CHECK_INSTRUCTIONS if fix_check else INSTRUCTIONS
-    rule, form, tail = (STEP_BLOCKING_RULE, STEP_OUTPUT_FORMAT, STEP_CHECK_6) if step_round else \
+    step_form = STEP_FIX_OUTPUT_FORMAT if fix_check else STEP_OUTPUT_FORMAT
+    rule, form, tail = (STEP_BLOCKING_RULE, step_form, STEP_CHECK_6) if step_round else \
         (BLOCKING_RULE, OUTPUT_FORMAT, "")
     # The round's slots fill first, so text from the data file never meets a slot it would fill.
     text = text.replace("<check 6 tail>", tail).replace("<blocking rule>", rule).replace("<output format>", form)
@@ -527,24 +543,52 @@ def stone_branch(base_ref):
     return None
 
 
+def comment_pages(pr_number):
+    """Every comment on the pull request as one flat list, or None when gh fails or its reply is not JSON."""
+    # --slurp wraps the pages in one array; without it a second page breaks the JSON.
+    listed = run(["gh", "api", f"repos/{{owner}}/{{repo}}/issues/{pr_number}/comments", "--paginate", "--slurp"])
+    if listed.returncode != 0:
+        return None
+    try:
+        pages = json.loads(listed.stdout)
+    except ValueError:
+        return None
+    if not isinstance(pages, list) or not all(isinstance(page, list) for page in pages):
+        return None
+    return [comment for page in pages for comment in page if isinstance(comment, dict)]
+
+
+def plan_tables(comments):
+    """The text of each comment that opens with PLAN_TABLES_MARK, in the listing's order, without the mark."""
+    return [body[len(PLAN_TABLES_MARK):].strip() for body in (comment.get("body") or "" for comment in comments)
+            if body.startswith(PLAN_TABLES_MARK)]
+
+
 def stone_plan(base_ref):
-    """The body of the open pull request whose head is the stone branch, so the reviewer sees what the plan researched.
+    """(body, tables) of the open pull request whose head is the stone branch, so the reviewer sees what the plan
+    researched.
 
     A step's base is its stone branch, or the step below it while that one is open; the stone's own pull
-    request to main carries the approved plan. Returns None for a pull request into main or when no such
-    pull request is open.
+    request to main carries the approved plan in its body, and the plan's tables in each comment that opens
+    with PLAN_TABLES_MARK, which tables lists in order. A failed comment listing gives the body alone, with no
+    tables. Returns None for a pull request into main, when no such pull request is open, when its body
+    fetch fails, or when it has neither a body nor a table.
     """
     stone = stone_branch(base_ref)
     if stone is None:
         return None
-    proc = run(["gh", "pr", "list", "--head", stone, "--state", "open", "--json", "body", "--limit", "1"])
+    proc = run(["gh", "pr", "list", "--head", stone, "--state", "open", "--json", "number,body", "--limit", "1"])
     if proc.returncode != 0:
         return None
     try:
         rows = json.loads(proc.stdout or "[]")
     except ValueError:
         return None  # a review without the plan beats a traceback
-    return rows[0]["body"] if rows and rows[0].get("body") else None
+    if not rows:
+        return None
+    comments = comment_pages(rows[0]["number"]) if rows[0].get("number") else None
+    body, tables = rows[0].get("body") or "", plan_tables(comments or [])
+    return (body, tables) if body or tables else None
 
 
 def build_prompt(pr, diff, stone, context_files, root, fix_check=None, turns=FULL_TURNS, ci=None, sliced=None):
@@ -598,7 +642,13 @@ def build_prompt(pr, diff, stone, context_files, root, fix_check=None, turns=FUL
         parts.append(f"# Context: {path} (read from {source})\n\n" + source.read_text(encoding="utf-8"))
     plan = stone_plan(pr["baseRefName"])
     if plan:
-        parts.append("# The stone's approved plan (the body of the stone's pull request to main)\n\n" + plan)
+        body, tables = plan
+        if tables:
+            parts.append("# The stone's approved plan (the body of the stone's pull request to main, then each of "
+                         f"its comments that opens with {PLAN_TABLES_MARK}, in order)\n\n"
+                         + "\n\n".join(([body] if body else []) + tables))
+        else:
+            parts.append("# The stone's approved plan (the body of the stone's pull request to main)\n\n" + body)
     parts.append(f"# Repository invariants ({DATA['review']['invariants']['file']})\n\n" + invariants(root))
     parts.append(CI_SECTION.format(head7=pr["headRefOid"][:7]) + "\n\n" + (ci if ci is not None else CI_ABSENT))
     if fix_check:
