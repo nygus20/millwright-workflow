@@ -17,7 +17,9 @@ the row written once at the close, where a gotcha lands, the summary's "For the
 next stone" section, the worktree under `<worktrees>`, a consumer's engine asks and
 its pull requests into the engine); the close-stone skill names no gotcha history
 and no findings cap, the coordinate-stone skill sets no row to "open", and no
-findings skill asks for a docs-map row; and no skill names the retired "Common Gotchas".
+findings skill asks for a docs-map row; no skill names the retired "Common Gotchas"; and
+each citation of a close-stone item from another plugin file names, in its sentence,
+a topic the cited item holds, so a renumbering that leaves a citation behind fails.
 A concrete folder is a `<word>-worktrees` name, or an absolute path from a drive
 letter or a home folder that runs through a folder named `worktrees`; the
 placeholder `<worktrees>` and the bare key stay allowed. Each check runs once on
@@ -82,6 +84,15 @@ FORBIDDEN = {"close-stone": {"the gotcha history": "gotcha-history.md",
              "prior-art": {"the docs-map row": "lists that doc in `documents/README.md`"},
              "port-triage": {"the docs-map row": "listed in `documents/README.md`"}}
 RETIRED = "Common Gotchas"
+# Each citation of a close-stone item from another plugin file, keyed by a text its sentence holds, with a text the
+# cited item must hold. Pull request 22 dropped item 6 and left three citations one number high, which the review
+# of pull request 23 found.
+CLOSE = PLUGIN / "skills" / "close-stone" / "SKILL.md"
+CLOSE_CITATION = re.compile(r"`mw:close-stone` skill, item (\d+)")
+CLOSE_TOPICS = {"the full run": ("runs it once more", "`run_tests.bat --long`"),
+                "the row written once": ("the registry entry once", "writes the stone's row once"),
+                "the Records bullets": ("Records bullet", "The Records bullets"),
+                "the fix check": ("fix check", "`gh pr ready <stone-pr>`")}
 # No repository's folder is a constant here: the data file's worktrees key holds it (the plugin's rule 5).
 NAMED_FOLDER = re.compile(r"[\w.-]*\w-worktrees\b", re.I)
 ABSOLUTE_PATH = re.compile(r"(?:(?<![\w])[A-Za-z]:[\\/]|~/|/home/|/Users/)[^\s`'\"()<>,;]*")
@@ -128,6 +139,26 @@ def clause_problems(skills):
     found += [f"{skill} names {what}" for skill, texts in FORBIDDEN.items()
               for what, text in texts.items() if text in skills.get(skill, "")]
     return found + [f"{skill} names {RETIRED}" for skill, text in skills.items() if RETIRED in text]
+
+
+def citation_problems(close, texts):
+    """Each citation of a close-stone item whose sentence names no one known topic, or whose item does not hold
+    the topic's text; close is the skill's text, texts maps a name to a citing text."""
+    items = {}
+    for line in close.splitlines():
+        numbered = re.match(r"(\d+)\. ", line)
+        if numbered:
+            items.setdefault(int(numbered.group(1)), line)
+    found = []
+    for name, text in texts.items():
+        for cited in CLOSE_CITATION.finditer(text):
+            sentence, number = re.split(r"(?<=[.;])\s", text[:cited.start()])[-1], int(cited.group(1))
+            topics = [what for what, (said, _) in CLOSE_TOPICS.items() if said in sentence]
+            if len(topics) != 1:
+                found.append(f"{name} cites close-stone item {number} for no one known topic")
+            elif CLOSE_TOPICS[topics[0]][1] not in items.get(number, ""):
+                found.append(f"{name} cites close-stone item {number} for {topics[0]}, which that item does not hold")
+    return found
 
 
 checks, failures = 0, []
@@ -201,6 +232,28 @@ for skill, texts in FORBIDDEN.items():
               [f"{skill} names {what}"])
 check("planted, the retired section", clause_problems({**skills, "x": f"AGENTS.md \"{RETIRED}\""}),
       [f"x names {RETIRED}"])
+
+close_text = CLOSE.read_text(encoding="utf-8")
+# This file is left out, because its planted texts below cite items on purpose.
+citing = {path.relative_to(PLUGIN).as_posix(): path.read_text(encoding="utf-8")
+          for path in [PLUGIN / "README.md"] + sorted((PLUGIN / "skills").glob("*/SKILL.md"))
+          + sorted((PLUGIN / "agents").glob("*.md")) + sorted((PLUGIN / "hooks").glob("*.py"))
+          + sorted((PLUGIN / "output-styles").glob("*.md")) + sorted((PLUGIN / "tools").glob("*.py"))
+          if path not in (CLOSE, Path(__file__).resolve())}
+check("each close-stone citation names its item", citation_problems(close_text, citing), [])
+check("the close-stone citations are read",
+      sum(len(CLOSE_CITATION.findall(text)) for text in citing.values()) >= 5, True)
+CITE = "(`mw:close-stone` skill, item "
+for name, text, want in [
+        ("the fix check one item high", f"the next round is the fix check over them {CITE}10).",
+         "x cites close-stone item 10 for the fix check, which that item does not hold"),
+        ("the Records bullets at the fix check's item", f"each Records bullet is fixed {CITE}9).",
+         "x cites close-stone item 9 for the Records bullets, which that item does not hold"),
+        ("no known topic", f"Read the memory index {CITE}6).", "x cites close-stone item 6 for no one known topic")]:
+    check(f"planted, {name}", citation_problems(close_text, {"x": text}), [want])
+dropped = re.sub(r"^9\. ", "10. ", close_text, flags=re.M)
+check("planted, the close's fix check renumbered", citation_problems(dropped, citing),
+      ["skills/adversarial-review/SKILL.md cites close-stone item 9 for the fix check, which that item does not hold"] * 2)
 
 for line in failures:
     print(f"FAIL {line}")
