@@ -14,9 +14,10 @@ names a concrete worktree folder, which only the data file's `worktrees` key hol
 the start-stone, close-stone and coordinate-stone skills hold the clauses each
 stone needs (the plan's hand-overs, the "Builds on" reading, the stone registry and
 the row written once at the close, where a gotcha lands, the summary's "For the
-next stone" section, the worktree under `<worktrees>`); the close-stone skill names
-no gotcha history and the coordinate-stone skill sets no row to "open"; and no
-skill names the retired "Common Gotchas".
+next stone" section, the worktree under `<worktrees>`, a consumer's engine asks and
+its pull requests into the engine); the close-stone skill names no gotcha history
+and no findings cap, the coordinate-stone skill sets no row to "open", and no
+findings skill asks for a docs-map row; and no skill names the retired "Common Gotchas".
 A concrete folder is a `<word>-worktrees` name, or an absolute path from a drive
 letter or a home folder that runs through a folder named `worktrees`; the
 placeholder `<worktrees>` and the bare key stay allowed. Each check runs once on
@@ -53,23 +54,33 @@ CALL = "`mw:step-builder`"
 # The clauses each stone skill holds: the plan's hand-overs (engine issue 831), the stone registry (engine
 # issue 877), where a gotcha lands since the engine's AGENTS.md retired its gotcha section, the worktree, and the
 # lighter start and close of the engine's issue 962: the planning reads the "Builds on" summaries, the summary
-# ends with "For the next stone", and the close alone writes the row and the registry entry.
+# ends with "For the next stone", and the close alone writes the row and the registry entry. The engine's issue
+# 1012 adds a consumer's engine asks (item 4) and its pull requests into the engine's `main` (item 3).
 CLAUSES = {
     "start-stone": {"the hand-overs section": "a \"Hand-overs\" section",
                     "the check against open stones": "`gh pr list --base main --state open",
                     "the \"Builds on\" reading": "the stones on the entry's \"Builds on\" line",
-                    "the worktree": "git worktree add <worktrees>/<slug>"},
+                    "the worktree": "git worktree add <worktrees>/<slug>",
+                    "the engine asks": "an \"Engine asks\" section",
+                    "the branch into the engine": "from a branch `game/<slug>`",
+                    "the issue-only rest": "Everything else in the engine stays issue-only"},
     "close-stone": {"the registry": "holds a `stone_registry` key", "the rewrite": "the key's `rewrite` command",
                     "the row written once": "writes the stone's row once",
                     "where a gotcha lands": "where AGENTS.md \"Maintenance Rules\" says a gotcha lands",
                     "the summary's last section": "the fixed section \"For the next stone\"",
                     "the worktree removal": "git worktree remove <worktrees>/<slug>"},
-    "coordinate-stone": {"no row and no registry entry": "writes no workstream row and no registry entry"},
+    "coordinate-stone": {"no row and no registry entry": "writes no workstream row and no registry entry",
+                         "the consumer's step in the engine": "a consumer stone's step in the engine's repository"},
 }
-# The texts a stone skill must not hold: no close writes the gotcha history (the engine's issue 962, ask 4),
-# and no first step marks a stone open in a record.
-FORBIDDEN = {"close-stone": {"the gotcha history": "gotcha-history.md"},
-             "coordinate-stone": {"the row set to open": "to \"open\""}}
+# The texts a skill must not hold: no close writes the gotcha history (the engine's issue 962, ask 4), no first
+# step marks a stone open in a record, no findings doc gets a docs-map row (the engine's issue 995), and the close
+# sets the findings folder against no cap, which the owner dropped on 2026-11-12.
+FORBIDDEN = {"close-stone": {"the gotcha history": "gotcha-history.md",
+                             "the docs-map check": "lists the stone's findings doc",
+                             "the findings cap": "those of `documents/findings/`"},
+             "coordinate-stone": {"the row set to open": "to \"open\""},
+             "prior-art": {"the docs-map row": "lists that doc in `documents/README.md`"},
+             "port-triage": {"the docs-map row": "listed in `documents/README.md`"}}
 RETIRED = "Common Gotchas"
 # No repository's folder is a constant here: the data file's worktrees key holds it (the plugin's rule 5).
 NAMED_FOLDER = re.compile(r"[\w.-]*\w-worktrees\b", re.I)
