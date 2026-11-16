@@ -92,7 +92,9 @@ FORBIDDEN = {"close-stone": {"the gotcha history": "gotcha-history.md",
                              "the docs-map check": "lists the stone's findings doc",
                              "the findings cap": "those of `documents/findings/`",
                              # The owner reads the section alone (ruled 2026-11-16), so no reply pastes the summary whole.
-                             "the whole summary as the reply": "then give the owner the same text"},
+                             "the whole summary as the reply": "then give the owner the same text",
+                             # The tool holds the parts' order; a count in the skill went stale once (pull request 24).
+                             "a count of the section's parts": "A fourth part"},
              "coordinate-stone": {"the row set to open": "to \"open\""},
              "prior-art": {"the docs-map row": "lists that doc in `documents/README.md`"},
              "port-triage": {"the docs-map row": "listed in `documents/README.md`"}}
