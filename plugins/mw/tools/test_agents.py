@@ -15,8 +15,9 @@ the start-stone, close-stone and coordinate-stone skills hold the clauses each
 stone needs (the plan's hand-overs, the "Builds on" reading, the stone registry and
 the row written once at the close, where a gotcha lands, the summary's "For the
 next stone" section, the worktree under `<worktrees>`, a consumer's engine asks and
-its pull requests into the engine); the close-stone skill names no gotcha history
-and no findings cap, the coordinate-stone skill sets no row to "open", and no
+its pull requests into the engine, the section "For the owner" that opens the plan
+and the closing summary, with its check); the close-stone skill names no gotcha history,
+no findings cap and no reply that pastes the whole summary, the coordinate-stone skill sets no row to "open", and no
 findings skill asks for a docs-map row; no skill names the retired "Common Gotchas"; and
 each citation of a close-stone item from another plugin file names, in its sentence,
 a topic the cited item holds, so a renumbering that leaves a citation behind fails.
@@ -57,7 +58,8 @@ CALL = "`mw:step-builder`"
 # issue 877), where a gotcha lands since the engine's AGENTS.md retired its gotcha section, the worktree, and the
 # lighter start and close of the engine's issue 962: the planning reads the "Builds on" summaries, the summary
 # ends with "For the next stone", and the close alone writes the row and the registry entry. The engine's issue
-# 1012 adds a consumer's engine asks (item 4) and its pull requests into the engine's `main` (item 3).
+# 1012 adds a consumer's engine asks (item 4) and its pull requests into the engine's `main` (item 3). The owner's
+# ruling of 2026-11-16 adds the section "For the owner" that opens the plan and the closing summary, with its check.
 CLAUSES = {
     "start-stone": {"the hand-overs section": "a \"Hand-overs\" section",
                     "the check against open stones": "`gh pr list --base main --state open",
@@ -65,8 +67,17 @@ CLAUSES = {
                     "the worktree": "git worktree add <worktrees>/<slug>",
                     "the engine asks": "an \"Engine asks\" section",
                     "the branch into the engine": "from a branch `game/<slug>`",
-                    "the issue-only rest": "Everything else in the engine stays issue-only"},
+                    "the issue-only rest": "Everything else in the engine stays issue-only",
+                    "the owner's section": "opens with the section \"For the owner\"",
+                    "the section's check": "tools/owner_section.py\" plan",
+                    "the section's end line": "\"Everything below this line is for the agents.\"",
+                    "the section's last part": "- **Waiting for you.**"},
     "close-stone": {"the registry": "holds a `stone_registry` key", "the rewrite": "the key's `rewrite` command",
+                    "the owner's section": "The section \"For the owner\", first",
+                    "the summary's check": "tools/owner_section.py\" summary",
+                    "the reply to the owner": "reply to the owner with the section \"For the owner\", the comment's link",
+                    "the reminder in the reply": "the reminder line below, which names its file",
+                    "the waiting items in the section": "names every item that waits for the owner",
                     "the row written once": "writes the stone's row once",
                     "where a gotcha lands": "where AGENTS.md \"Maintenance Rules\" says a gotcha lands",
                     "the summary's last section": "the fixed section \"For the next stone\"",
@@ -79,7 +90,11 @@ CLAUSES = {
 # sets the findings folder against no cap, which the owner dropped on 2026-11-12.
 FORBIDDEN = {"close-stone": {"the gotcha history": "gotcha-history.md",
                              "the docs-map check": "lists the stone's findings doc",
-                             "the findings cap": "those of `documents/findings/`"},
+                             "the findings cap": "those of `documents/findings/`",
+                             # The owner reads the section alone (ruled 2026-11-16), so no reply pastes the summary whole.
+                             "the whole summary as the reply": "then give the owner the same text",
+                             # The tool holds the parts' order; a count in the skill went stale once (pull request 24).
+                             "a count of the section's parts": "A fourth part"},
              "coordinate-stone": {"the row set to open": "to \"open\""},
              "prior-art": {"the docs-map row": "lists that doc in `documents/README.md`"},
              "port-triage": {"the docs-map row": "listed in `documents/README.md`"}}
