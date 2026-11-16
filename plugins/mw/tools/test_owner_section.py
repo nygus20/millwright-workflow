@@ -43,7 +43,7 @@ def check(name, got, want):
         failures.append(f"{name}: got {got!r}, want {want!r}")
 
 
-IMPACT = ["The player", "Saves and content", "Speed on the devices", "Other stones", "Waiting for you"]
+IMPACT = ["The player", "Saves and content", "Speed on the devices", "Other stones"]
 END = section.END_LINE
 
 
@@ -51,7 +51,7 @@ def build(kind, impact, title="# Plan: Stone 7, the results screen"):
     """A text of the given kind that passes, with one impact line per name."""
     first = "What changes." if kind == "plan" else "What changed."
     against = ["**Against the plan.** As planned.", ""] if kind == "summary" else []
-    names = impact or ["The player", "The schedule", "Waiting for you"]
+    names = impact or ["The player", "The schedule", "Other stones"]
     return "\n".join([
         title, "", "## For the owner", "",
         f"**{first}** A run now ends on a full results screen. The game keeps one record of each run.", "",
@@ -61,6 +61,7 @@ def build(kind, impact, title="# Plan: Stone 7, the results screen"):
         "- The score matches the leaderboard server, a small program that ranks the runs. The agent decided.", "",
         *against,
         "**The impact.**", *[f"- {name}: none." for name in names], "",
+        "**Waiting for you.** Nothing.", "",
         END, "", "## Context", "", "The plan's own text names `src/death.cpp` and `run_score()` freely.", ""])
 
 
@@ -89,7 +90,7 @@ planted = [
     ("the decisions with no text", "\n".join(line for line in PLAN.splitlines()
                                              if not line.startswith("- The s")), ['the part "The decisions." is empty']),
     ("the parts out of order", PLAN.replace("**What changes.**", "**X.**").replace("**The decisions.**", "**What changes.**")
-     .replace("**X.**", "**The decisions.**"), ["the parts stand out of order: The decisions., What changes., The impact."]),
+     .replace("**X.**", "**The decisions.**"), ["the parts stand out of order: The decisions., What changes., The impact., Waiting for you."]),
     ("an impact line gone", PLAN.replace("- Other stones: none.\n", ""), ['the impact part lacks the line "- Other stones: ..."']),
     ("an impact line with no text", PLAN.replace("- Other stones: none.", "- Other stones: "),
      ['the impact part lacks the line "- Other stones: ..."']),
@@ -107,6 +108,26 @@ planted = [
 ]
 for name, text, want in planted:
     check(f"planted, {name}", section.problems(text, "plan", IMPACT), want)
+check("planted, no word on what waits for the owner", section.problems(
+    PLAN.replace("**Waiting for you.** Nothing.", "**Waiting for you.**"), "plan", IMPACT),
+    ['the part "Waiting for you." is empty'])
+check("planted, no part on what waits for the owner", section.problems(
+    PLAN.replace("**Waiting for you.** Nothing.\n\n", ""), "plan", IMPACT), ['the section lacks the part "Waiting for you."'])
+# The eight probes round 1 of the review of pull request 24 found the first pattern let through, then the names
+# that have such a shape and pass: the tool's own short list, and the repository's list.
+for probe in ("RunRecord", "ResultsScreen::show", "player.score", "recompute(score)", "mwAllowGuardEdit", "sprite.glsl",
+              "boot.lua", "src/render/", "settings.local.json", "game.h"):
+    check(f"planted, the probe {probe}", section.problems(
+        PLAN.replace("one record of each run", f"one record of each run in {probe} today"), "plan", IMPACT),
+        [f'line 5 names "{probe}", which reads as a file or an identifier'])
+for prose in ("e.g. a boss", "i.e. the score", "on GitHub's page", "in PowerShell", "at version 0.1.17", "and/or both",
+              "(the stone G29b)", "as planned.", "on the owner's device"):
+    check(f"prose passes: {prose}", section.problems(
+        PLAN.replace("one record of each run", f"one record of each run {prose}"), "plan", IMPACT), [])
+steam = PLAN.replace("one record of each run", "one record of each run on SteamOS through sokol_gfx")
+check("planted, a product's name the repository does not list", section.problems(steam, "plan", IMPACT),
+      ['line 5 names "SteamOS", which reads as a file or an identifier'])
+check("a product's name the repository lists passes", section.problems(steam, "plan", IMPACT, ["SteamOS", "sokol_gfx"]), [])
 check("planted, a plan read as a summary", section.problems(PLAN, "summary", IMPACT),
       ['the section lacks the part "What changed."', 'the section lacks the part "Against the plan."'])
 check("planted, a summary with no word on the plan", section.problems(
@@ -137,7 +158,7 @@ def run(base, kind, text, data=None, root=True):
 
 base = tempfile.mkdtemp(prefix="mw-owner-section-")
 try:
-    named = {**DATA, "owner_section": {"impact": IMPACT}}
+    named = {**DATA, "owner_section": {"impact": IMPACT, "names": ["SteamOS"]}}
     code, out = run(base, "plan", PLAN, named)
     check("command: a plan that passes exits 0", (code, "the plan's section passes" in out, " words of 300" in out),
           (0, True, True))
@@ -147,8 +168,13 @@ try:
     check("command: a missing impact line exits 1 and names it",
           (code, '[owner_section] the impact part lacks the line "- Other stones: ..."' in out, "section is refused" in out),
           (1, True, True))
+    code, out = run(base, "plan", PLAN.replace("each run.", "each run on SteamOS."), named)
+    check("command: a product's name the data file lists passes", code, 0)
+    code, out = run(base, "plan", PLAN.replace("each run.", "each run on SteamOS."), {**DATA, "owner_section": {"impact": IMPACT}})
+    check("command: the same name without the list exits 1 and names the key",
+          (code, 'names "SteamOS"' in out, "owner_section.names" in out), (1, True, True))
     code, out = run(base, "plan", PLAN, DATA)
-    check("command: a data file with no names takes five lines of the author's own", code, 0)
+    check("command: a data file with no names takes four lines of the author's own", code, 0)
     code, out = run(base, "plan", build("plan", ["The player"]), {**DATA, "owner_section": {"impact": ["The player"]}})
     check("command: the names come from the data file", code, 0)
     code, out = run(base, "plan", None, named)
@@ -165,12 +191,13 @@ try:
     import mw_data  # noqa: E402  (the loader sits at the plugin's root)
     try:
         project_impact = mw_data.load(PROJECT).get("owner_section", {}).get("impact", [])
+        project_names = mw_data.load(PROJECT).get("owner_section", {}).get("names", [])
     except mw_data.DataFileError:
         project_impact = None  # tools/test_hooks.py reports a data file that does not load
     if project_impact is not None:
         for kind in ("plan", "summary"):
             check(f"project: a {kind} built from {PROJECT.name}'s names passes",
-                  section.problems(build(kind, project_impact), kind, project_impact), [])
+                  section.problems(build(kind, project_impact), kind, project_impact, project_names), [])
 finally:
     shutil.rmtree(base, ignore_errors=True)
 

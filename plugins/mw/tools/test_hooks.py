@@ -454,6 +454,8 @@ with tempfile.TemporaryDirectory() as scratch:
                          ("a name with a colon", ["The player: sees"])):
         cases.append((f"owner_section.impact as {what}", {**DATA, "owner_section": {"impact": impact}},
                       "owner_section.impact must"))
+    cases.append(("owner_section.names as one string", {**DATA, "owner_section": {"impact": ["The player"], "names": "x"}},
+                  "owner_section.names must be a list"))
     for what, data, reason in cases:
         write_data(broken, data)
         check(f"data: {guard} refuses {what}", refuses(run_hook(guard, broken, broken / "CMakePresets.json"), reason), True)
@@ -497,9 +499,10 @@ with tempfile.TemporaryDirectory() as scratch:
 
     # The optional owner section: a file with it gives its impact names, and the fixture's file loads with none.
     check("data: a file without the owner section loads with no such key", "owner_section" in loaded, False)
-    write_data(broken, {**DATA, "owner_section": {"impact": ["The player", "Waiting for you"]}})
-    check("data: the owner section loads with its impact names", mw_data.load(broken)["owner_section"],
-          {"impact": ["The player", "Waiting for you"]})
+    owner = {"impact": ["The player", "Other stones"], "names": ["SteamOS"]}
+    write_data(broken, {**DATA, "owner_section": owner})
+    check("data: the owner section loads with its impact names and its products' names",
+          mw_data.load(broken)["owner_section"], owner)
 
     # The kill hook: it denies a stop by name in either shell and passes a stop by PID and a listing alone.
     kill_hook = "deny_kill_by_name.py"

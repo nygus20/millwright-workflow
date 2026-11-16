@@ -7,23 +7,28 @@ Usage:
 FILE holds the plan or the summary as Markdown. The tool only reads, so a session in plan mode may
 run it. The owner reads this one section and may skip the rest of the text, so the tool refuses a
 text whose section a cold reader could not use. The `mw:start-stone` skill gives the section's
-rules, and the `mw:close-stone` skill the summary's two differences. The checks:
+rules, and the `mw:close-stone` skill the summary's differences. The checks:
 1. A heading "For the owner", of level 2 or 3, exists. Only the text's title, other headings, blank
    lines and HTML comments, such as a record's marker, stand above it.
 2. The section ends with the line "Everything below this line is for the agents.", and no heading
    stands between the section's heading and that line.
 3. Each part opens a line with its label in bold, in order. A plan holds "What changes.", "The
-   decisions." and "The impact."; a summary holds "What changed.", "The decisions.", "Against the
-   plan." and "The impact.". No part is empty.
+   decisions.", "The impact." and "Waiting for you."; a summary holds "What changed.", "The
+   decisions.", "Against the plan.", "The impact." and "Waiting for you.". No part is empty.
 4. The impact part holds one line `- <name>: <text>` per name under `owner_section.impact` in the
    repository's .claude/mw.json. A repository without the key gets three to five lines of the
    author's own choosing.
 5. The section holds at most 300 words.
-6. The section holds no backtick, no file name with a source or data extension, no identifier
-   joined by underscores and no call form such as `name()`. A link's address is not read.
+6. The section holds no backtick and no name of a shape code has: a file's name with a source or
+   data extension, names joined by dots, by `::` or by underscores, a name with a capital after a
+   lower-case letter, a name with an opening bracket straight after it, and a path with two
+   slashes. A product's name of such a shape passes when the tool's short list holds it, as it
+   holds GitHub and PowerShell, or when `owner_section.names` in the data file lists it. A link's
+   address is not read.
 
-The tool cannot judge whether a sentence is clear, whether a term is explained or whether a stone is
-named by its title. Those rules stay the author's.
+The shapes catch the common code names only: a one-word identifier such as `score`, or a path with
+one slash, passes. The tool also cannot judge whether a sentence is clear, whether a term is explained or
+whether a stone is named by its title. Those rules stay the author's.
 
 FOLDER is the repository whose data file gives the impact names: the folder given, else the git
 top level of the caller's folder, else the caller's folder.
@@ -47,21 +52,36 @@ ANY_HEADING = re.compile(r"^#{1,6} ")
 COMMENT = re.compile(r"^<!--.*-->$")
 END_LINE = "Everything below this line is for the agents."
 IMPACT_LABEL = "The impact."
-PARTS = {"plan": ("What changes.", "The decisions.", IMPACT_LABEL),
-         "summary": ("What changed.", "The decisions.", "Against the plan.", IMPACT_LABEL)}
+WAITING_LABEL = "Waiting for you."
+PARTS = {"plan": ("What changes.", "The decisions.", IMPACT_LABEL, WAITING_LABEL),
+         "summary": ("What changed.", "The decisions.", "Against the plan.", IMPACT_LABEL, WAITING_LABEL)}
 # The cap in words. The game's results-screen stone, sketched in this form with three decisions and five
 # impact lines, came to about 200 words; the room above that is for a stone with more decisions.
 WORD_CAP = 300
 OWN_LINES = (3, 5)  # the impact lines of a repository whose data file names none
 WORD = re.compile(r"\S*\w\S*")
 URL = re.compile(r"https?://\S+")
-CODE_NAME = re.compile(r"\b[\w-]+\.(?:c|cc|cpp|h|hpp|py|toml|json|md|bat|sh|yml|yaml|cmake|txt|js|ts|gd)\b"
-                       r"|\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+\b|\b\w+\(\)")
+# The shapes of a name that reads as code, tried in this order at each place. Round 1 of the review of the
+# marketplace's pull request 24 named eight probes the first pattern let through; tools/test_owner_section.py
+# holds each of them.
+CODE_NAME = re.compile(
+    r"\b[\w-]+\.(?:c|cc|cpp|h|hpp|py|toml|json|md|bat|sh|yml|yaml|cmake|txt|js|ts|gd)\b"  # a file with a known extension
+    r"|\b[A-Za-z_][\w-]*(?:\.[A-Za-z_]\w+)+\b"  # names joined by dots: a field, or a file with any other extension
+    r"|\b\w+(?:::\w+)+"  # names joined by a scope
+    r"|\b\w+\((?:[^)\s]*\))?"  # a name with a bracket straight after it: a call
+    r"|\b[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+\b"  # names joined by underscores
+    r"|\b[A-Za-z0-9]*[a-z][A-Z]\w*\b"  # a capital after a lower-case letter: a type or a key
+    r"|[\w.-]+/[\w.-]+/[\w./-]*")  # a path with two slashes
+# The products whose names have such a shape and which any repository's owner may read; a repository adds its own
+# under owner_section.names in its data file.
+GENERAL_NAMES = frozenset({"GitHub", "PowerShell", "JavaScript", "TypeScript", "WebGL", "OpenGL", "macOS", "iOS",
+                           "Node.js", "AddressSanitizer", "UndefinedBehaviorSanitizer"})
 
 
-def problems(text, kind, impact):
-    """The problems of the section in text, each one sentence; kind is "plan" or "summary", and impact
-    lists the names the impact part must hold, or is empty when the repository names none."""
+def problems(text, kind, impact, names=()):
+    """The problems of the section in text, each one sentence; kind is "plan" or "summary", impact lists
+    the names the impact part must hold, or is empty when the repository names none, and names lists the
+    products' names the repository lets through the code-name check."""
     lines = text.splitlines()
     start = next((i for i, line in enumerate(lines) if HEADING.match(line)), None)
     if start is None:
@@ -106,9 +126,10 @@ def problems(text, kind, impact):
     for number, line in enumerate(body, start + 2):
         if "`" in line:
             found.append(f"line {number} holds code formatting")
-        name = CODE_NAME.search(URL.sub("", line.replace("`", " ")))
-        if name:
-            found.append(f'line {number} names "{name.group(0)}", which reads as a file or an identifier')
+        coded = next((name.group(0) for name in CODE_NAME.finditer(URL.sub("", line.replace("`", " ")))
+                      if name.group(0) not in GENERAL_NAMES and name.group(0) not in names), None)
+        if coded:
+            found.append(f'line {number} names "{coded}", which reads as a file or an identifier')
     return found
 
 
@@ -143,12 +164,13 @@ def main(argv):
         print(f"[owner_section] {args.file} could not be read: {error}")
         return 2
     root = Path(args.root) if args.root else repository(Path.cwd())
-    impact = mw_data.load_or_exit(root).get("owner_section", {}).get("impact", [])
-    found = problems(text, args.kind, impact)
+    data = mw_data.load_or_exit(root).get("owner_section", {})
+    found = problems(text, args.kind, data.get("impact", []), data.get("names", []))
     for line in found:
         print(f"[owner_section] {line}")
     if found:
-        print(f"[owner_section] the {args.kind}'s section is refused for the lines above")
+        print(f"[owner_section] the {args.kind}'s section is refused for the lines above; a product's name the "
+              "owner knows passes once owner_section.names in .claude/mw.json lists it")
         return 1
     print(f"[owner_section] the {args.kind}'s section passes: {word_count(text)} words of {WORD_CAP}")
     return 0

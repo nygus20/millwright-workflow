@@ -18,7 +18,9 @@ present, it must hold a file string and a rewrite string. The optional top-level
 owner_section object names, under impact, the lines the section "For the owner"
 of each plan and closing summary must hold, which tools/owner_section.py reads;
 when present, impact must list at least one name, each with text and no colon,
-because the tool matches a line by `- <name>:`. A repository without either
+because the tool matches a line by `- <name>:`, and its optional names, the
+products' names the tool lets through its code-name check, must be a list of
+strings. A repository without either
 key loads as before. load_or_exit(root) is the form a hook or a tool calls:
 it prints the reason on stderr and exits 2, which stops a hook's tool call and
 hands the reason to the agent, and which a tool's caller reads as a refusal.
@@ -107,6 +109,8 @@ def load(root):
                 or not section["impact"]:
             raise DataFileError(f"{DATA_FILE} key owner_section.impact must list at least one name, each with text "
                                 "and no colon")
+        if "names" in section:
+            _require(section, "names", list, "owner_section.")
     for key, default in REVIEW_DEFAULTS.items():
         review.setdefault(key, json.loads(json.dumps(default)))  # a copy, so no caller edits the defaults
     for key in SLICE_KEYS:
