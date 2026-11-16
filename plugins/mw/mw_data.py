@@ -14,8 +14,12 @@ not JSON, an unknown version, a missing required key or a value of the wrong
 type, review.slice_bytes and review.max_slices included, which must be positive
 integers when the file sets them. The optional top-level stone_registry object names the file that records
 a repository's stones and the command that rewrites what is made from it; when
-present, it must hold a file string and a rewrite string. A repository without
-the key loads as before. load_or_exit(root) is the form a hook or a tool calls:
+present, it must hold a file string and a rewrite string. The optional top-level
+owner_section object names, under impact, the lines the section "For the owner"
+of each plan and closing summary must hold, which tools/owner_section.py reads;
+when present, impact must list at least one name, each with text and no colon,
+because the tool matches a line by `- <name>:`. A repository without either
+key loads as before. load_or_exit(root) is the form a hook or a tool calls:
 it prints the reason on stderr and exits 2, which stops a hook's tool call and
 hands the reason to the agent, and which a tool's caller reads as a refusal.
 
@@ -97,6 +101,12 @@ def load(root):
         registry = _require(data, "stone_registry", dict, "")
         _require(registry, "file", str, "stone_registry.")
         _require(registry, "rewrite", str, "stone_registry.")
+    if "owner_section" in data:  # optional: the impact lines the owner reads in each plan and closing summary
+        section = _require(data, "owner_section", dict, "")
+        if not all(name.strip() and ":" not in name for name in _require(section, "impact", list, "owner_section.")) \
+                or not section["impact"]:
+            raise DataFileError(f"{DATA_FILE} key owner_section.impact must list at least one name, each with text "
+                                "and no colon")
     for key, default in REVIEW_DEFAULTS.items():
         review.setdefault(key, json.loads(json.dumps(default)))  # a copy, so no caller edits the defaults
     for key in SLICE_KEYS:

@@ -447,6 +447,13 @@ with tempfile.TemporaryDirectory() as scratch:
                       f"required key stone_registry.{key}"))
     cases.append(("a stone registry's rewrite that is a list", {**DATA, "stone_registry": {**registry, "rewrite": ["python"]}},
                   "key stone_registry.rewrite must be a str"))
+    cases.append(("an owner section that is a list", {**DATA, "owner_section": ["The player"]},
+                  "key owner_section must be a dict"))
+    cases.append(("no owner_section.impact", {**DATA, "owner_section": {}}, "required key owner_section.impact"))
+    for what, impact in (("one string", "The player"), ("an empty list", []), ("a blank name", ["The player", " "]),
+                         ("a name with a colon", ["The player: sees"])):
+        cases.append((f"owner_section.impact as {what}", {**DATA, "owner_section": {"impact": impact}},
+                      "owner_section.impact must"))
     for what, data, reason in cases:
         write_data(broken, data)
         check(f"data: {guard} refuses {what}", refuses(run_hook(guard, broken, broken / "CMakePresets.json"), reason), True)
@@ -487,6 +494,12 @@ with tempfile.TemporaryDirectory() as scratch:
     check("data: a file without the stone registry loads as before",
           ("stone_registry" in loaded, loaded["guard"], loaded["scratch_patterns"], loaded["review"]["costly_paths"]),
           (False, DATA["guard"], DATA["scratch_patterns"], DATA["review"]["costly_paths"]))
+
+    # The optional owner section: a file with it gives its impact names, and the fixture's file loads with none.
+    check("data: a file without the owner section loads with no such key", "owner_section" in loaded, False)
+    write_data(broken, {**DATA, "owner_section": {"impact": ["The player", "Waiting for you"]}})
+    check("data: the owner section loads with its impact names", mw_data.load(broken)["owner_section"],
+          {"impact": ["The player", "Waiting for you"]})
 
     # The kill hook: it denies a stop by name in either shell and passes a stop by PID and a listing alone.
     kill_hook = "deny_kill_by_name.py"
