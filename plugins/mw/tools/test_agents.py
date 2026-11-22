@@ -55,7 +55,8 @@ STANDING = {"the rule files": ".claude/rules/", "the worktree line": "`git workt
             # The engine's Inbound line of 2026-11-18: the guard hook reads the override from the edited file's
             # checkout root, so a guard-file step builds in the stone's worktree (the engine's Stone 42, step 16).
             "the guard-file step's exception": "builds on its own branch inside the stone's worktree",
-            "one guard-file step at a time": "one such step at a time"}
+            "one guard-file step at a time": "one such step at a time",
+            "where the hook reads the override": "only for an edit in that checkout or for a session started there"}
 # CI's run is a step's one full gate (the engine's issue 942), so the body names
 # no full local suite run: the coordinator's brief names one for a step that changes a file CI does not build.
 UNFILTERED = {"an unfiltered run": "unfiltered", "the suite wrapper": "run_tests.bat",
@@ -84,7 +85,10 @@ CLAUSES = {
                     "the pin's CHANGELOG line": "`documents/process/workflow-plugin.md` and its CHANGELOG line alone",
                     "the pin's other edits to an issue": "goes to an engine issue, and the engine stone that takes it "
                                                          "moves the pin",
-                    "the guard-file step's branch": "builds on its own branch inside the stone's worktree"},
+                    "the guard-file step's branch": "builds on its own branch inside the stone's worktree",
+                    "one guard-file step at a time": "one such step at a time",
+                    "the override's place": "in the stone worktree's `.claude/settings.local.json`",
+                    "the hook's second place": "and the project directory the session started in"},
     "close-stone": {"the registry": "holds a `stone_registry` key", "the rewrite": "the key's `rewrite` command",
                     "the owner's section": "The section \"For the owner\", first",
                     "the summary's check": "tools/owner_section.py\" summary",
@@ -98,7 +102,9 @@ CLAUSES = {
     "coordinate-stone": {"no row and no registry entry": "writes no workstream row and no registry entry",
                          "the consumer's step in the engine": "a consumer stone's step in the engine's repository",
                          "the guard-file step's branch line": "a branch line in place of the worktree line",
-                         "the guard-file step's branch": "builds on its own branch inside the stone's worktree"},
+                         "the guard-file step's branch": "builds on its own branch inside the stone's worktree",
+                         "one guard-file step at a time": "one such step at a time",
+                         "the switch back": "switches the stone's worktree back to the stone branch"},
 }
 # The texts a skill must not hold: no close writes the gotcha history (the engine's issue 962, ask 4), no first
 # step marks a stone open in a record, no findings doc gets a docs-map row (the engine's issue 995), and the close
@@ -112,7 +118,10 @@ FORBIDDEN = {"close-stone": {"the gotcha history": "gotcha-history.md",
                              "a count of the section's parts": "A fourth part"},
              "coordinate-stone": {"the row set to open": "to \"open\""},
              # The engine's note of 2026-11-13 adds the pin's CHANGELOG line to the two files.
-             "start-stone": {"the pin on two files": "`documents/process/workflow-plugin.md` alone"},
+             "start-stone": {"the pin on two files": "`documents/process/workflow-plugin.md` alone",
+                             # The hook reads the override in two places, so the override goes in the stone's
+                             # worktree, never the main checkout, where it would cover every worktree.
+                             "the override in the main checkout": "in the stone's worktree or the main checkout"},
              "prior-art": {"the docs-map row": "lists that doc in `documents/README.md`"},
              "port-triage": {"the docs-map row": "listed in `documents/README.md`"}}
 RETIRED = "Common Gotchas"
