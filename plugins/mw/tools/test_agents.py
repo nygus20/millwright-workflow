@@ -15,8 +15,11 @@ the start-stone, close-stone and coordinate-stone skills hold the clauses each
 stone needs (the plan's hand-overs, the "Builds on" reading, the stone registry and
 the row written once at the close, where a gotcha lands, the summary's "For the
 next stone" section, the worktree under `<worktrees>`, a consumer's engine asks and
-its pull requests into the engine, the section "For the owner" that opens the plan
-and the closing summary, with its check); the close-stone skill names no gotcha history,
+its pull requests into the engine, the engine's pin on its three files alone, the
+guard-file step on its own branch inside the stone's worktree, the section "For the
+owner" that opens the plan and the closing summary, with its check); the step
+builder's body names that step's exception; the start-stone skill no longer limits
+the pin to two files; the close-stone skill names no gotcha history,
 no findings cap and no reply that pastes the whole summary, the coordinate-stone skill sets no row to "open", and no
 findings skill asks for a docs-map row; no skill names the retired "Common Gotchas"; and
 each citation of a close-stone item from another plugin file names, in its sentence,
@@ -48,7 +51,13 @@ STANDING = {"the rule files": ".claude/rules/", "the worktree line": "`git workt
             "the scratchpad name": "carries the step's number in its name", "the quick check": "`quick_check.bat`",
             "CI's run": "CI's run on the pull request's head is the step's one full gate",
             "the background wait": "`gh pr checks <pr> --watch", "the base": "against the base the brief names",
-            "no draft": "never as a draft", "the report": "200 words"}
+            "no draft": "never as a draft", "the report": "200 words",
+            # The engine's Inbound line of 2026-11-18: the guard hook reads the override from the edited file's
+            # checkout root, so a guard-file step builds in the stone's worktree (the engine's Stone 42, step 16).
+            "the guard-file step's exception": "builds on its own branch inside the stone's worktree",
+            "one guard-file step at a time": "one such step at a time",
+            "where the hook reads the override": "only for an edit in that checkout or for a session started there",
+            "the hook's condition": "unless the session started in the stone's worktree"}
 # CI's run is a step's one full gate (the engine's issue 942), so the body names
 # no full local suite run: the coordinator's brief names one for a step that changes a file CI does not build.
 UNFILTERED = {"an unfiltered run": "unfiltered", "the suite wrapper": "run_tests.bat",
@@ -60,6 +69,8 @@ CALL = "`mw:step-builder`"
 # ends with "For the next stone", and the close alone writes the row and the registry entry. The engine's issue
 # 1012 adds a consumer's engine asks (item 4) and its pull requests into the engine's `main` (item 3). The owner's
 # ruling of 2026-11-16 adds the section "For the owner" that opens the plan and the closing summary, with its check.
+# Release 0.1.18 takes the engine's note of 2026-11-13 on the pin's files, and its Inbound line of 2026-11-18 on the
+# guard-file step, which builds on its own branch inside the stone's worktree.
 CLAUSES = {
     "start-stone": {"the hand-overs section": "a \"Hand-overs\" section",
                     "the check against open stones": "`gh pr list --base main --state open",
@@ -71,7 +82,15 @@ CLAUSES = {
                     "the owner's section": "opens with the section \"For the owner\"",
                     "the section's check": "tools/owner_section.py\" plan",
                     "the section's end line": "\"Everything below this line is for the agents.\"",
-                    "the section's last part": "- **Waiting for you.**"},
+                    "the section's last part": "- **Waiting for you.**",
+                    "the pin's CHANGELOG line": "`documents/process/workflow-plugin.md` and its CHANGELOG line alone",
+                    "the pin's other edits to an issue": "goes to an engine issue, and the engine stone that takes it "
+                                                         "moves the pin",
+                    "the guard-file step's branch": "builds on its own branch inside the stone's worktree",
+                    "one guard-file step at a time": "one such step at a time",
+                    "the override's place": "in the stone worktree's `.claude/settings.local.json`",
+                    "the hook's second place": "and the project directory the session started in",
+                    "the hook's condition": "unless the session started in the stone's worktree"},
     "close-stone": {"the registry": "holds a `stone_registry` key", "the rewrite": "the key's `rewrite` command",
                     "the owner's section": "The section \"For the owner\", first",
                     "the summary's check": "tools/owner_section.py\" summary",
@@ -83,7 +102,14 @@ CLAUSES = {
                     "the summary's last section": "the fixed section \"For the next stone\"",
                     "the worktree removal": "git worktree remove <worktrees>/<slug>"},
     "coordinate-stone": {"no row and no registry entry": "writes no workstream row and no registry entry",
-                         "the consumer's step in the engine": "a consumer stone's step in the engine's repository"},
+                         "the consumer's step in the engine": "a consumer stone's step in the engine's repository",
+                         "the guard-file step's branch line": "a branch line in place of the worktree line",
+                         "the guard-file step's branch": "builds on its own branch inside the stone's worktree",
+                         "one guard-file step at a time": "one such step at a time",
+                         "the switch back": "switches the stone's worktree back to the stone branch",
+                         "where the hook reads the override": "only for an edit in that checkout or for a session "
+                                                              "started there",
+                         "the hook's condition": "unless the session started in the stone's worktree"},
 }
 # The texts a skill must not hold: no close writes the gotcha history (the engine's issue 962, ask 4), no first
 # step marks a stone open in a record, no findings doc gets a docs-map row (the engine's issue 995), and the close
@@ -95,7 +121,15 @@ FORBIDDEN = {"close-stone": {"the gotcha history": "gotcha-history.md",
                              "the whole summary as the reply": "then give the owner the same text",
                              # The tool holds the parts' order; a count in the skill went stale once (pull request 24).
                              "a count of the section's parts": "A fourth part"},
-             "coordinate-stone": {"the row set to open": "to \"open\""},
+             "coordinate-stone": {"the row set to open": "to \"open\"",
+                                  # The hook also passes on the session's project directory (round 2 of pull
+                                  # request 26), so no text says a fresh step worktree never finds the override.
+                                  "the hook's rule without its condition": "and not for one in a fresh step worktree"},
+             # The engine's note of 2026-11-13 adds the pin's CHANGELOG line to the two files.
+             "start-stone": {"the pin on two files": "`documents/process/workflow-plugin.md` alone",
+                             # The hook reads the override in two places, so the override goes in the stone's
+                             # worktree, never the main checkout, where it would cover every worktree.
+                             "the override in the main checkout": "in the stone's worktree or the main checkout"},
              "prior-art": {"the docs-map row": "lists that doc in `documents/README.md`"},
              "port-triage": {"the docs-map row": "listed in `documents/README.md`"}}
 RETIRED = "Common Gotchas"
