@@ -138,7 +138,7 @@ RETIRED = "Common Gotchas"
 # of pull request 23 found.
 CLOSE = PLUGIN / "skills" / "close-stone" / "SKILL.md"
 CLOSE_CITATION = re.compile(r"`mw:close-stone` skill, item (\d+)")
-CLOSE_TOPICS = {"the full run": ("runs it once more", "`run_tests.bat --long`"),
+CLOSE_TOPICS = {"the full run": ("runs it once more", "`run_tests.bat --long --record-costs`"),
                 "the row written once": ("the registry entry once", "writes the stone's row once"),
                 "the Records bullets": ("Records bullet", "The Records bullets"),
                 "the fix check": ("fix check", "`gh pr ready <stone-pr>`")}
